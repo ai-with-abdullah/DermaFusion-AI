@@ -134,7 +134,7 @@ def _parse_ham10000(data_dir: str, masks_dir: Optional[str] = None) -> List[Skin
     """Parse HAM10000. Supports two CSV formats:
     1. Standard: columns image_id + dx (text label)
     2. One-hot:  columns image + MEL, NV, BCC, AKIEC, BKL, DF, VASC (0.0/1.0)
-    Searches multiple locations for the CSV.
+    Searches multiple locations for the CSV (supports local and Kaggle layouts).
     """
     records: List[SkinLesionRecord] = []
     cls_map = UnifiedSkinDataset.CLASS_TO_IDX
@@ -144,12 +144,15 @@ def _parse_ham10000(data_dir: str, masks_dir: Optional[str] = None) -> List[Skin
         'AKIEC': 'akiec', 'BKL': 'bkl', 'DF': 'df', 'VASC': 'vasc',
     }
 
-    # Search candidate CSV paths
+    # HAM10000 lives inside data/ham10000/ subfolder on Kaggle
+    ham_root = os.path.join(data_dir, 'ham10000')
+
+    # Search candidate CSV paths (root dir first, then ham10000 subfolder)
     csv_candidates = [
-        os.path.join(data_dir, 'HAM10000_metadata.csv'),
-        os.path.join(data_dir, 'ISIC_2024_metadata.csv'),
-        os.path.join(data_dir, 'metadata.csv'),
-        # Also check if archive GroundTruth ended up in isic_2019/
+        os.path.join(data_dir,  'HAM10000_metadata.csv'),
+        os.path.join(ham_root,  'HAM10000_metadata.csv'),
+        os.path.join(data_dir,  'ISIC_2024_metadata.csv'),
+        os.path.join(data_dir,  'metadata.csv'),
         os.path.join(data_dir, 'isic_2019', 'ISIC_2019_Training_GroundTruth.csv'),
     ]
 
@@ -169,17 +172,37 @@ def _parse_ham10000(data_dir: str, masks_dir: Optional[str] = None) -> List[Skin
     if df is None:
         return records
 
-    # Image directory — HAM10000 images live in data/images/
-    img_dir = os.path.join(data_dir, 'images')
-    if not os.path.exists(img_dir):
+    # Image directories — search flat dir, then part_1/part_2 subdirs (Kaggle layout)
+    img_dirs = []
+    for candidate in [
+        os.path.join(data_dir, 'images'),
+        os.path.join(ham_root, 'images'),
+        os.path.join(ham_root, 'HAM10000_images_part_1'),
+        os.path.join(ham_root, 'HAM10000_images_part_2'),
+        os.path.join(ham_root, 'ham10000_images_part_1'),
+        os.path.join(ham_root, 'ham10000_images_part_2'),
+    ]:
+        if os.path.exists(candidate):
+            img_dirs.append(candidate)
+
+    if not img_dirs:
         return records
+
+    def _find_image(image_id: str) -> Optional[str]:
+        for d in img_dirs:
+            p = os.path.join(d, f"{image_id}.jpg")
+            if os.path.exists(p):
+                return p
+        return None
 
     if fmt == 'standard':
         for _, row in df.iterrows():
             label_str = str(row['dx']).lower().strip()
             if label_str not in cls_map:
                 continue
-            img_path = os.path.join(img_dir, f"{row['image_id']}.jpg")
+            img_path = _find_image(str(row['image_id']))
+            if img_path is None:
+                continue
             mask_path = None
             if masks_dir:
                 for suffix in [f"{row['image_id']}_segmentation.png", f"{row['image_id']}.png"]:
@@ -206,9 +229,8 @@ def _parse_ham10000(data_dir: str, masks_dir: Optional[str] = None) -> List[Skin
             if label_str is None or label_str not in cls_map:
                 continue
             img_id   = str(row['image'])
-            img_path = os.path.join(img_dir, f"{img_id}.jpg")
-            # Only add if image actually exists (avoids pulling in mismatched CSVs)
-            if not os.path.exists(img_path):
+            img_path = _find_image(img_id)
+            if img_path is None:
                 continue
             records.append(SkinLesionRecord(
                 image_path=img_path,
