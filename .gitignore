@@ -1,11 +1,48 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
-.DS_Store
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.spec
+
+# ─── Environments ─────────────────────────────────────────────────────────────
 .env
-data/
-outputs/
-weights/
-.venv/
+.venv
 venv/
-*.ipynb_checkpoints/
+env/
+
+# ─── Jupyter / IPython ────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ─── Model Weights & Checkpoints (too large for GitHub; use Kaggle / GDrive) ─
+outputs/weights/*.pth
+outputs/weights/*.pt
+outputs/weights/*.ckpt
+*.pth
+*.pt
+*.ckpt
+
+# ─── Dataset Folders (never commit raw images) ────────────────────────────────
+data/
+*.h5
+*.hdf5
+*.tfrecord
+
+# ─── Training Logs & Plots (optional, can re-generate) ────────────────────────
+outputs/logs/
+outputs/plots/
+outputs/explainability_heatmaps/
+*.log
+
+# ─── OS/IDE Artifacts ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
