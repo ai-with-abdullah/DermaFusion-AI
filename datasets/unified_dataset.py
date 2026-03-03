@@ -246,48 +246,71 @@ def _parse_ham10000(data_dir: str, masks_dir: Optional[str] = None) -> List[Skin
 
 def _parse_isic2019(data_dir: str) -> List[SkinLesionRecord]:
     """
-    Parse ISIC 2019 dataset.
-    Expected layout:
-      data/isic_2019/ISIC_2019_Training_Input/  (images)
-      data/isic_2019/ISIC_2019_Training_GroundTruth.csv
+    Parse ISIC 2019 dataset. Supports two layouts:
+    1. Flat layout:      data/isic_2019/ISIC_2019_Training_Input/{image}.jpg
+    2. Per-class layout: data/isic_2019/MEL/{image}.jpg  (Kaggle dataset)
 
-    Bug #7 fix: Only append a record if the image file actually exists on disk.
-    Previously, the for-else construct would silently add records pointing to
-    non-existent .jpg paths, leading to black 384×384 tensors in training.
+    The GroundTruth CSV is used in both cases for class labels.
+    Also maps AK/SCC → akiec to handle the 8-class Kaggle variant.
     """
     records: List[SkinLesionRecord] = []
     cls_map = UnifiedSkinDataset.CLASS_TO_IDX
     base = os.path.join(data_dir, 'isic_2019')
 
+    # Extended remap: handles AK and SCC present in the Kaggle per-class layout
+    REMAP = {**ISIC2019_REMAP, 'AK': 'akiec', 'SCC': 'akiec'}
+
     csv_path = os.path.join(base, 'ISIC_2019_Training_GroundTruth.csv')
-    img_dir  = os.path.join(base, 'ISIC_2019_Training_Input')
-    if not os.path.exists(csv_path) or not os.path.exists(img_dir):
+    if not os.path.exists(csv_path):
         return records
 
     df = pd.read_csv(csv_path)
-    label_cols = [c for c in ISIC2019_REMAP.keys() if c in df.columns]
+
+    # Detect layout: per-class folders (MEL/, NV/, ...) vs flat ISIC_2019_Training_Input/
+    class_folders = {
+        k: os.path.join(base, k)
+        for k in list(ISIC2019_REMAP.keys()) + ['AK', 'SCC']
+        if os.path.isdir(os.path.join(base, k))
+    }
+    flat_dir = os.path.join(base, 'ISIC_2019_Training_Input')
+    use_per_class = len(class_folders) > 0
+
+    if not use_per_class and not os.path.exists(flat_dir):
+        return records   # no image source found
+
+    label_cols = [c for c in REMAP.keys() if c in df.columns]
     missing_count = 0
 
+    def _find_img(image_id: str, label_col: str) -> Optional[str]:
+        search_dirs = []
+        if use_per_class and label_col in class_folders:
+            search_dirs.append(class_folders[label_col])
+            # also scan all class folders as fallback
+            search_dirs += [d for k, d in class_folders.items() if k != label_col]
+        if os.path.exists(flat_dir):
+            search_dirs.append(flat_dir)
+        for d in search_dirs:
+            for ext in ['.jpg', '.JPG', '.jpeg', '.png']:
+                p = os.path.join(d, f"{image_id}{ext}")
+                if os.path.exists(p):
+                    return p
+        return None
+
     for _, row in df.iterrows():
+        label_col = None
         label_str = None
         for col in label_cols:
             if row.get(col, 0) == 1.0:
-                label_str = ISIC2019_REMAP.get(col)
+                label_col = col
+                label_str = REMAP.get(col)
                 break
         if label_str is None or label_str not in cls_map:
             continue
 
-        # Bug #7 fix: find the actual file; skip if none exists
-        img_path = None
-        for ext in ['.jpg', '.JPG', '.png', '.jpeg']:
-            candidate = os.path.join(img_dir, f"{row['image']}{ext}")
-            if os.path.exists(candidate):
-                img_path = candidate
-                break
-
+        img_path = _find_img(str(row['image']), label_col or '')
         if img_path is None:
             missing_count += 1
-            continue  # skip — do NOT add black-image records
+            continue
 
         records.append(SkinLesionRecord(
             image_path=img_path,
@@ -298,7 +321,7 @@ def _parse_isic2019(data_dir: str) -> List[SkinLesionRecord]:
 
     if missing_count > 0:
         print(f"  [ISIC 2019] Skipped {missing_count} rows with missing image files.")
-    print(f"  [ISIC 2019] Loaded {len(records)} records.")
+    print(f"  [ISIC 2019] Loaded {len(records)} records (per-class={use_per_class}).")
     return records
 
 
