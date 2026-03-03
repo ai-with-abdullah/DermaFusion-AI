@@ -1,0 +1,3 @@
+2026-02-28 16:59:13,829 INFO Starting Lesion Segmentation Training
+2026-02-28 17:00:23,296 INFO Using SwinTransformerUNet (2026 SOTA)
+2026-02-28 17:00:23,298 INFO Epoch 1/50
