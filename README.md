@@ -294,5 +294,3 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 *If this project helped your research or learning, please ⭐ the repository!*
 
 </div>
-# DermaFusion-AI
-# DermaFusion-AI
