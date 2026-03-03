@@ -33,7 +33,7 @@ class Config:
     # =========================================================================
     # Data & Classes
     # =========================================================================
-    IMAGE_SIZE  = 384    # High-res (384×384) — SOTA standard for EVA-02 + ConvNeXt V2
+    IMAGE_SIZE  = 224    # Reduced for faster training on Kaggle P100 (3× faster than 384)
     NUM_CLASSES = 7
     CLASSES     = ['akiec', 'bcc', 'bkl', 'df', 'mel', 'nv', 'vasc']
     MEAN        = [0.485, 0.456, 0.406]
@@ -45,10 +45,10 @@ class Config:
     SEED         = 42
     DEVICE       = "cuda" if torch.cuda.is_available() else "cpu"
     NUM_WORKERS  = 4      # ↑ from 2 — faster data loading on Colab
-    EPOCHS       = 80     # ↑ from 50 — resumes from epoch 50 checkpoint
-    PATIENCE     = 15     # Match EarlyStopping call in train_classifier.py
-    BATCH_SIZE   = 4      # Reduced for T4 GPU (16GB). Eff. batch = 4×16 = 64
-    GRADIENT_ACCUMULATION_STEPS = 16   # Effective batch = 64
+    EPOCHS       = 50     # 50 epochs at 224px fits in ~8hrs on Kaggle P100
+    PATIENCE     = 10     # Match EarlyStopping call in train_classifier.py
+    BATCH_SIZE   = 16     # P100 can handle 16 at 224×224. Eff. batch = 16×4 = 64
+    GRADIENT_ACCUMULATION_STEPS = 4    # Effective batch = 64
 
     # =========================================================================
     # LR Warmup + Layer Decay (2026 SOTA training recipe)
