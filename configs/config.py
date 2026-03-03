@@ -7,7 +7,7 @@ class Config:
     # Project paths
     # =========================================================================
     PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    DATA_DIR     = os.path.join(PROJECT_ROOT, "data")
+    DATA_DIR     = os.environ.get('DATA_DIR', os.path.join(PROJECT_ROOT, 'data'))
     OUTPUT_DIR   = os.path.join(PROJECT_ROOT, "outputs")
     WEIGHTS_DIR  = os.path.join(OUTPUT_DIR,   "weights")
     PLOTS_DIR    = os.path.join(OUTPUT_DIR,   "plots")
@@ -83,12 +83,12 @@ class Config:
     EVA02_BACKBONE  = "eva02_small_patch14_336.mim_in22k_ft_in1k"
     EVA02_PRETRAINED = True
     EVA02_EMBED_DIM  = 384
-    EVA02_LR         = 2e-5
-
+    EVA02_LR            = 2e-5
     # Branch B: ConvNeXt V2 (Local / Texture)
     CONVNEXT_BACKBONE  = "convnextv2_base.fcmae_ft_in22k_in1k_384"
     CONVNEXT_PRETRAINED = True
     CONVNEXT_LR         = 1e-5
+    CONVNEXT_INIT_ARGS  = dict(multi_scale=False) # Disabled — multi-scale returns a tuple which breaks fusion
 
     # Fusion
     FUSION_EMBED_DIM = 512

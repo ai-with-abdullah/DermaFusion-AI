@@ -270,7 +270,7 @@ class DualBranchFusionClassifier(nn.Module):
             pretrained=convnext_pretrained,
             embed_dim=fusion_dim,
             dropout=dropout,
-            multi_scale=True,   # ↑ Enabled — richer multi-scale local texture features
+            multi_scale=False,  # Must be False — True returns a tuple, breaking fusion
         )
         conv_dim = self.branch_conv.num_features
 
