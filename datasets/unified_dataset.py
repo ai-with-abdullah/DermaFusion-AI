@@ -332,17 +332,21 @@ def _parse_isic2020(data_dir: str) -> List[SkinLesionRecord]:
       data/isic_2020/train/          (images)
       data/isic_2020/train.csv       (columns: image_name, patient_id, target)
 
-    Bug #6: ISIC 2020 target=0 means 'not melanoma', NOT 'nv'. It includes
-    BCC, BKL, AK, SCC, DF, VASC — mapping target=0 to 'nv' adds ~28K
-    mislabeled samples that corrupt the NV/MEL decision boundary.
+    Strategy (FIXED — re-enabled positive-only):
+    ─────────────────────────────────────────────
+    ISIC 2020 target=0 means 'not melanoma', NOT specifically 'nv'.
+    It includes a mix of BCC, BKL, AK, DF, VASC, NV — mapping all of
+    these to 'nv' would corrupt the NV/MEL and every other decision
+    boundary with ~28K mislabeled samples.
 
-    Fix: ISIC 2020 is DISABLED by default to prevent label noise.
-    To re-enable: set ISIC2020_ENABLED = True in this function.
-    When re-enabled with correct labels, only use target=1 (mel) samples
-    or use multi-task learning with a separate binary head.
+    SAFE approach (now active):
+    • target=1 → 'mel'  (confirmed melanoma — ~1,755 clean positives)
+    • target=0 → SKIP   (heterogeneous negatives, label noise)
+
+    This recovers ~1,755 high-quality confirmed melanoma cases that
+    were previously being discarded entirely. The benign class is not
+    augmented from this dataset to avoid introducing noise.
     """
-    ISIC2020_ENABLED = False  # Disabled: target=0 != nv (label noise)
-
     records: List[SkinLesionRecord] = []
     cls_map = UnifiedSkinDataset.CLASS_TO_IDX
     base = os.path.join(data_dir, 'isic_2020')
@@ -352,20 +356,13 @@ def _parse_isic2020(data_dir: str) -> List[SkinLesionRecord]:
     if not os.path.exists(csv_path) or not os.path.exists(img_dir):
         return records
 
-    if not ISIC2020_ENABLED:
-        print("  [ISIC 2020] DISABLED — target=0 is not pure 'nv' (label noise). "
-              "Set ISIC2020_ENABLED=True to re-enable with caution.")
-        return records
-
-    # When re-enabled: ONLY use positive (mel) samples to avoid label noise.
-    # Or implement a multi-task binary head for ISIC2020.
     df = pd.read_csv(csv_path)
     if 'target' not in df.columns or 'image_name' not in df.columns:
         return records
 
     for _, row in df.iterrows():
         if int(row['target']) != 1:
-            continue  # Skip negatives — target=0 is not reliably 'nv'
+            continue  # Skip target=0 — heterogeneous negatives (label noise)
         label_str = 'mel'
 
         img_path = None
@@ -384,7 +381,8 @@ def _parse_isic2020(data_dir: str) -> List[SkinLesionRecord]:
             dataset_name='ISIC2020',
         ))
 
-    print(f"  [ISIC 2020] Loaded {len(records)} mel-positive records only.")
+    print(f"  [ISIC 2020] Loaded {len(records)} confirmed mel-positive records "
+          f"(target=0 negatives excluded — label noise).")
     return records
 
 
@@ -394,6 +392,15 @@ def _parse_isic2024(data_dir: str) -> List[SkinLesionRecord]:
     Expected layout:
       data/isic_2024/train-image/image/     (images as .jpg)
       data/isic_2024/train-metadata.csv     (columns: isic_id, target)
+
+    FIXED (Fix #4): Downsampling is NO LONGER done here. Loading all records
+    and returning them so that the split happens on the full distribution.
+    Downsampling of ISIC2024 negatives is applied AFTER the train/val/test
+    split, only on train_records, inside get_unified_dataloaders().
+    This prevents val/test being drawn from a pre-balanced pool.
+
+    FIXED (Fix #3): If the metadata CSV contains a 'patient_id' column, use
+    it as the patient identifier so GroupShuffleSplit works correctly.
     """
     records: List[SkinLesionRecord] = []
     cls_map = UnifiedSkinDataset.CLASS_TO_IDX
@@ -402,7 +409,6 @@ def _parse_isic2024(data_dir: str) -> List[SkinLesionRecord]:
     csv_path = os.path.join(base, 'train-metadata.csv')
     img_dir  = os.path.join(base, 'train-image', 'image')
     if not os.path.exists(csv_path):
-        # Also try flat layout
         csv_path = os.path.join(base, 'train.csv')
         img_dir  = os.path.join(base, 'images')
     if not os.path.exists(csv_path):
@@ -413,27 +419,27 @@ def _parse_isic2024(data_dir: str) -> List[SkinLesionRecord]:
     if id_col not in df.columns or 'target' not in df.columns:
         return records
 
-    # ISIC 2024 is heavily imbalanced (400K negatives, ~400 positives).
-    # For multi-dataset training we downsample negatives to 3× positives.
-    pos_df = df[df['target'] == 1]
-    neg_df = df[df['target'] == 0].sample(
-        n=min(len(pos_df) * 3, len(df[df['target'] == 0])),
-        random_state=config.SEED
-    )
-    df_sampled = pd.concat([pos_df, neg_df]).reset_index(drop=True)
+    # Use real patient_id if available (prevents same patient in train+test)
+    has_patient_col = 'patient_id' in df.columns
 
-    for _, row in df_sampled.iterrows():
+    for _, row in df.iterrows():
         label_str = 'mel' if int(row['target']) == 1 else 'nv'
         img_path = os.path.join(img_dir, f"{row[id_col]}.jpg")
 
+        pid = str(row['patient_id']) if has_patient_col else str(row[id_col])
         records.append(SkinLesionRecord(
             image_path=img_path,
             label_idx=cls_map[label_str],
-            patient_id=str(row[id_col]),
+            patient_id=pid,
             dataset_name='ISIC2024',
         ))
 
-    print(f"  [ISIC 2024] Loaded {len(records)} records (balanced sample).")
+    n_pos = sum(1 for r in records if r.label_idx == cls_map['mel'])
+    if not has_patient_col:
+        print("  [ISIC 2024] WARNING: no 'patient_id' column found — using isic_id as patient ID."
+              " Patient-level split not guaranteed.")
+    print(f"  [ISIC 2024] Loaded {len(records)} records ({n_pos} mel positives). "
+          f"Downsampling applied after split in get_unified_dataloaders().")
     return records
 
 
@@ -610,6 +616,11 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None):
     # Split
     train_records, val_records, test_records = _patient_aware_split(all_records)
 
+    # FIXED (Fix #4): Balance ISIC2024 negatives AFTER the split (not before).
+    # Previously _parse_isic2024() downsampled before splitting, so val/test were
+    # drawn from a pre-balanced pool that doesn't represent real class distribution.
+    train_records = _downsample_isic2024_train(train_records)
+
     # Build datasets
     train_ds = UnifiedSkinDataset(train_records, transforms=get_train_transforms())
     val_ds   = UnifiedSkinDataset(val_records,   transforms=get_valid_transforms())
@@ -633,6 +644,43 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None):
     )
 
     return train_loader, val_loader, test_loader, train_records
+
+
+def _downsample_isic2024_train(
+    train_records: List[SkinLesionRecord],
+    neg_to_pos_ratio: int = 3,
+    seed: int = config.SEED,
+) -> List[SkinLesionRecord]:
+    """
+    Downsamples ISIC2024 negative (nv) records in train split to neg_to_pos_ratio × positives.
+
+    FIXED (Fix #4): Downsampling is applied ONLY to train_records AFTER the split,
+    so val and test sets reflect the real ISIC2024 class distribution, not a
+    pre-balanced sample that would bias evaluation metrics.
+    """
+    from configs.config import config as _cfg
+    mel_idx = _cfg.CLASSES.index('mel') if 'mel' in _cfg.CLASSES else 4
+    nv_idx  = _cfg.CLASSES.index('nv')  if 'nv'  in _cfg.CLASSES else 5
+
+    isic24_pos = [r for r in train_records if r.dataset_name == 'ISIC2024' and r.label_idx == mel_idx]
+    isic24_neg = [r for r in train_records if r.dataset_name == 'ISIC2024' and r.label_idx == nv_idx]
+    other      = [r for r in train_records
+                  if r.dataset_name != 'ISIC2024'
+                  or (r.label_idx != mel_idx and r.label_idx != nv_idx)]
+
+    if not isic24_pos or not isic24_neg:
+        return train_records   # Nothing to downsample
+
+    target_neg = min(len(isic24_pos) * neg_to_pos_ratio, len(isic24_neg))
+    rng = np.random.default_rng(seed)
+    neg_keep_idx = rng.choice(len(isic24_neg), size=target_neg, replace=False)
+    isic24_neg_sampled = [isic24_neg[i] for i in sorted(neg_keep_idx)]
+
+    result = other + isic24_pos + isic24_neg_sampled
+    print(f"  [ISIC2024 Train Balance] pos={len(isic24_pos)}, "
+          f"neg={len(isic24_neg)} → {len(isic24_neg_sampled)} "
+          f"({neg_to_pos_ratio}:1 neg:pos ratio)")
+    return result
 
 
 # =========================================================================== #
@@ -669,14 +717,16 @@ def _make_dummy_records(data_dir: str) -> List[SkinLesionRecord]:
 
 def get_class_weights_from_records(records: List[SkinLesionRecord]) -> torch.Tensor:
     """
-    Returns class weights as a tensor for use with FocalLoss.
+    Returns class weights as a tensor for use with CombinedClassLoss.
 
     Strategy:
       - Sqrt inverse-frequency dampens extremes: nv(13K) vs vasc(284) → 6.8:1 not 47:1
-      - 3× melanoma boost (was 2×): mel is most dangerous, highest clinical FN cost
-        Research: MedGemma study achieved 93% mel recall with moderate class weighting.
-        3× is the sweet spot — aggressive enough to learn mel features, not so high
-        that it causes mel overfitting on the ~4,500 mel samples in HAM+ISIC2019.
+      - 2× melanoma boost: mel is most dangerous, highest clinical FN cost.
+
+    FIXED: Reduced 3× → 2× to avoid triple-stacking with CombinedClassLoss gamma and
+    the now-removed AsymmetricMelFocalLoss fn_weight. The previous 3× class weight ×
+    gamma=3.0 × fn_weight=3.0 produced up to 27× signal for mel FNs — causing mel
+    over-prediction and collapse of VASC/DF classes.
     """
     labels = [r.label_idx for r in records]
     counts = np.bincount(labels, minlength=config.NUM_CLASSES).astype(np.float32)
@@ -685,9 +735,9 @@ def get_class_weights_from_records(records: List[SkinLesionRecord]) -> torch.Ten
 
     weights = np.sqrt(total / (config.NUM_CLASSES * counts))
 
-    # 3× boost for melanoma — most dangerous cancer, highest clinical cost if missed
+    # 2× boost for melanoma — balanced single-layer priority (not triple-stacked)
     if 'mel' in config.CLASSES:
         mel_idx = config.CLASSES.index('mel')
-        weights[mel_idx] *= 3.0  # Increased from 2× → 3× (Bug #3 fix: sampler was halving this)
+        weights[mel_idx] *= 2.0
 
     return torch.FloatTensor(weights)
