@@ -49,7 +49,7 @@ class Config:
     # with OpenCV and Albumentations inside DataLoader workers.
     # Default to 0 workers on macOS, 4 on Linux/Colab.
     NUM_WORKERS  = 0 if sys.platform == 'darwin' else 4
-    EPOCHS       = 10   # Kaggle smoke-test: 10 seg + 10 classification (change to 50 for full run)
+    EPOCHS       = 2   # Kaggle smoke-test: 2 seg + 2 classification (change to 50 for full run)
     PATIENCE     = 15
     BATCH_SIZE   = 2           # EVA-02 Large requires smaller batch to fit VRAM
     GRADIENT_ACCUMULATION_STEPS = 32  # effective batch = 2 × 32 = 64
