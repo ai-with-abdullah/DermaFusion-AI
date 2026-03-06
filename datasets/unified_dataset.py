@@ -275,20 +275,33 @@ def _parse_isic2019(data_dir: str) -> List[SkinLesionRecord]:
     flat_dir = os.path.join(base, 'ISIC_2019_Training_Input')
     use_per_class = len(class_folders) > 0
 
-    if not use_per_class and not os.path.exists(flat_dir):
+    # Build all possible image search dirs — handle Kaggle's andrewmvd/isic-2019 layout
+    # which may nest images under subfolders. Collect ALL subdirs inside base.
+    all_search_dirs = []
+    if os.path.exists(flat_dir):
+        all_search_dirs.append(flat_dir)
+    if use_per_class:
+        all_search_dirs += list(class_folders.values())
+    # Also scan any other subdirectory directly inside base (Kaggle variant layouts)
+    if os.path.exists(base):
+        for sub in os.listdir(base):
+            sub_path = os.path.join(base, sub)
+            if os.path.isdir(sub_path) and sub_path not in all_search_dirs:
+                all_search_dirs.append(sub_path)
+
+    if not all_search_dirs:
         return records   # no image source found
 
     label_cols = [c for c in REMAP.keys() if c in df.columns]
     missing_count = 0
 
     def _find_img(image_id: str, label_col: str) -> Optional[str]:
+        # Priority: per-class folder → flat dir → all other subdirs
         search_dirs = []
         if use_per_class and label_col in class_folders:
             search_dirs.append(class_folders[label_col])
-            # also scan all class folders as fallback
             search_dirs += [d for k, d in class_folders.items() if k != label_col]
-        if os.path.exists(flat_dir):
-            search_dirs.append(flat_dir)
+        search_dirs += [d for d in all_search_dirs if d not in search_dirs]
         for d in search_dirs:
             for ext in ['.jpg', '.JPG', '.jpeg', '.png']:
                 p = os.path.join(d, f"{image_id}{ext}")
@@ -352,7 +365,11 @@ def _parse_isic2020(data_dir: str) -> List[SkinLesionRecord]:
     base = os.path.join(data_dir, 'isic_2020')
 
     csv_path = os.path.join(base, 'train.csv')
-    img_dir  = os.path.join(base, 'train')
+    # KAGGLE FIX: SIIM-ISIC competition stores JPEG images in jpeg/train/, NOT train/
+    # train/ contains DICOM files. jpeg/train/ has the actual .jpg images.
+    img_dir = os.path.join(base, 'jpeg', 'train')
+    if not os.path.exists(img_dir):
+        img_dir = os.path.join(base, 'train')  # fallback for non-Kaggle layout
     if not os.path.exists(csv_path) or not os.path.exists(img_dir):
         return records
 
