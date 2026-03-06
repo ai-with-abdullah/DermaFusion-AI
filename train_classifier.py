@@ -469,7 +469,8 @@ def main():
     if os.path.exists(resume_path):
         logger.info(f"\n[RESUME] Found checkpoint → {resume_path}")
         ckpt = torch.load(resume_path, map_location=config.DEVICE)
-        model.load_state_dict(ckpt['model'])
+        raw_model.load_state_dict(ckpt['model'])
+
         optimizer.load_state_dict(ckpt['optimizer'])
         scheduler.load_state_dict(ckpt['scheduler'])
         if ema is not None and 'ema_shadow' in ckpt:
