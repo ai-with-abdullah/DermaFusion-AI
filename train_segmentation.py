@@ -120,10 +120,27 @@ def main():
     # Early Stopping
     best_model_path = os.path.join(config.WEIGHTS_DIR, "best_unet.pth")
     early_stopping = EarlyStopping(patience=config.PATIENCE, verbose=True, path=best_model_path, trace_func=logger.info)
-    
+
+    # ── Resume checkpoint: continue from last saved epoch ──────────────── #
+    resume_path = os.path.join(config.WEIGHTS_DIR, "resume_seg_checkpoint.pth")
+    start_epoch = 1
+    best_dice   = 0.0
+    if os.path.exists(resume_path):
+        logger.info(f"[RESUME] Found segmentation checkpoint → {resume_path}")
+        ckpt = torch.load(resume_path, map_location=config.DEVICE)
+        raw_model.load_state_dict(ckpt['model'])
+        optimizer.load_state_dict(ckpt['optimizer'])
+        scheduler.load_state_dict(ckpt['scheduler'])
+        start_epoch = ckpt['epoch'] + 1
+        best_dice   = ckpt.get('best_dice', 0.0)
+        early_stopping.best_score = ckpt.get('best_score', None)
+        early_stopping.counter    = ckpt.get('es_counter', 0)
+        logger.info(f"[RESUME] Resuming from Epoch {start_epoch}/{config.EPOCHS}  best_dice={best_dice:.4f}")
+    else:
+        logger.info("[RESUME] No checkpoint found — starting from Epoch 1")
+
     # Training Loop
-    best_dice = 0.0
-    for epoch in range(1, config.EPOCHS + 1):
+    for epoch in range(start_epoch, config.EPOCHS + 1):
         logger.info(f"Epoch {epoch}/{config.EPOCHS}")
         
         train_loss, train_dice = train_one_epoch(model, train_loader, criterion, optimizer, scaler, config.DEVICE)
@@ -134,13 +151,27 @@ def main():
         logger.info(f"Train Loss: {train_loss:.4f} | Train Dice: {train_dice:.4f}")
         logger.info(f"Val Loss: {val_loss:.4f} | Val Dice: {val_dice:.4f}")
         
-        # We want to maximize val_dice, so we use val_dice directly.
         early_stopping(val_dice, raw_model)
+
+        # ── Save resume checkpoint after every epoch ────────────────────── #
+        ckpt = {
+            'epoch':      epoch,
+            'model':      raw_model.state_dict(),
+            'optimizer':  optimizer.state_dict(),
+            'scheduler':  scheduler.state_dict(),
+            'best_dice':  max(best_dice, val_dice),
+            'best_score': early_stopping.best_score,
+            'es_counter': early_stopping.counter,
+        }
+        torch.save(ckpt, resume_path)
+        logger.info(f"[CHECKPOINT] Epoch {epoch} saved → resume from next run will start at epoch {epoch+1}")
+
         if early_stopping.early_stop:
             logger.info("Early stopping triggered")
             break
 
     logger.info("Segmentation Training Completed.")
+
 
 if __name__ == "__main__":
     main()
