@@ -339,17 +339,24 @@ def main():
         dropout=config.FUSION_DROPOUT,
     ).to(config.DEVICE)
 
-    # ── Multi-GPU: wrap both models with DataParallel if 2+ GPUs ──────── #
+    # ── Multi-GPU: DataParallel only when per-GPU batch is ≥ 2 ──────────── #
+    # DataParallel overhead > gain when each GPU sees only 1 image.
+    # With batch=4 and 2 GPUs: per_gpu_batch=2 → worthwhile.
     n_gpus = torch.cuda.device_count()
-    if n_gpus > 1:
-        logger.info(f"Using {n_gpus} GPUs with DataParallel")
+    per_gpu_batch = config.BATCH_SIZE // max(n_gpus, 1)
+    use_ddp = (n_gpus > 1) and (per_gpu_batch >= 2)
+    if use_ddp:
+        logger.info(f"Using {n_gpus} GPUs with DataParallel (batch={config.BATCH_SIZE}, {per_gpu_batch}/GPU)")
         unet  = torch.nn.DataParallel(unet)
         model = torch.nn.DataParallel(model)
     else:
-        logger.info(f"Using single GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
+        if n_gpus > 1:
+            logger.info(f"Skipping DataParallel: per-GPU batch {per_gpu_batch} < 2 (overhead > gain) — using GPU 0 only")
+        logger.info(f"GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
     # raw_model: unwrapped for EMA, param groups, and weight saving
     raw_model = model.module if isinstance(model, torch.nn.DataParallel) else model
+
 
     ema = ModelEMA(raw_model, decay=config.EMA_DECAY, device=config.DEVICE) if config.USE_EMA else None
 

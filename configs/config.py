@@ -30,10 +30,11 @@ class Config:
     ISIC_2024_DIR = os.path.join(DATA_DIR, "isic_2024")
     PH2_DIR       = os.path.join(DATA_DIR, "ph2")
 
-    # ISIC 2024 downsampling: use more negatives since ISIC 2019 images are unavailable
-    # pos=~300 mel cases from ISIC 2024; ratio=50 → ~15,000 negatives used in training
-    # (was 3 → only ~900 negatives — too little from a 400K dataset)
-    ISIC2024_NEG_TO_POS_RATIO = 50
+    # ISIC 2024 downsampling: ratio=10 balances diversity vs epoch speed on T4×2
+    # pos=~300 mel cases; ratio=10 → ~3,000 negatives in training
+    # Lower than 50 (was 22K samples) → now ~12K samples → ~2 hrs/epoch vs 9.5 hrs
+    # Resume checkpoints allow training to continue across weekly quota resets
+    ISIC2024_NEG_TO_POS_RATIO = 10
 
     # =========================================================================
     # Data & Classes
@@ -52,11 +53,9 @@ class Config:
     NUM_WORKERS  = 4      # ↑ from 2 — faster data loading on Colab
     EPOCHS       = 25     # Fresh training run from scratch
     PATIENCE     = 15     # Match EarlyStopping call in train_classifier.py
-    BATCH_SIZE     = 2    # EVA-02 Large (448px) is memory-heavy — use batch=2 on T4/A100
-    SEG_BATCH_SIZE = 8    # Swin-Tiny (95M params, 224px) is much lighter → batch=8 per GPU
-                          # With 2×T4 GPUs + DataParallel: effective seg batch = 16
-                          # DataParallel is only efficient when batch >= 2×n_gpus (else overhead > gain)
-    GRADIENT_ACCUMULATION_STEPS = 32   # Effective classifier batch = 64 (same as before)
+    BATCH_SIZE     = 4    # Increased from 2: 2 images/GPU with DataParallel → overhead < gain
+    SEG_BATCH_SIZE = 8    # Swin-Tiny (95M, 224px): batch=8 per GPU
+    GRADIENT_ACCUMULATION_STEPS = 16   # Effective batch = 64 (batch=4 × accum=16)
 
 
     # =========================================================================
