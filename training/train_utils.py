@@ -16,6 +16,9 @@ class ModelEMA:
     This prevents the shadow from being stuck near pretrained weights in
     early epochs when gradient updates are large and noisy (batch_size=4).
     After ~10K steps the formula saturates to config_decay (e.g. 0.9998).
+
+    FIXED (DataParallel): All methods auto-unwrap nn.DataParallel so they
+    work correctly whether you pass model.module or the wrapped model.
     """
     def __init__(self, model, decay=0.9998, device=None):
         self.config_decay = decay   # Target long-run decay
@@ -26,8 +29,14 @@ class ModelEMA:
         self._step  = 0
         self.register(model)
 
+    @staticmethod
+    def _unwrap(model):
+        """Strip DataParallel wrapper so parameter names are consistent."""
+        return model.module if isinstance(model, torch.nn.DataParallel) else model
+
     def register(self, model):
         """Register all trainable parameters AND buffers (BN stats)."""
+        model = self._unwrap(model)
         for name, param in model.named_parameters():
             if param.requires_grad:
                 self.shadow[name] = param.data.clone().to(self.device)
@@ -43,11 +52,12 @@ class ModelEMA:
 
     def update(self, model):
         """EMA update with warmup decay for parameters and buffers."""
+        model = self._unwrap(model)
         self._update_decay()
         d = self.decay
         for name, param in model.named_parameters():
             if param.requires_grad:
-                assert name in self.shadow
+                assert name in self.shadow, f"EMA: unexpected param '{name}' — was model changed after register()?"
                 new_average = (1.0 - d) * param.data + d * self.shadow[name]
                 self.shadow[name] = new_average.clone()
         for name, buf in model.named_buffers():
@@ -59,6 +69,7 @@ class ModelEMA:
 
     def apply_shadow(self, model):
         """Swap in EMA weights+buffers for validation. Call restore() after."""
+        model = self._unwrap(model)
         self.backup = {}
         for name, param in model.named_parameters():
             if param.requires_grad:
@@ -73,6 +84,7 @@ class ModelEMA:
 
     def restore(self, model):
         """Restore original training weights and buffers after EMA validation."""
+        model = self._unwrap(model)
         for name, param in model.named_parameters():
             if param.requires_grad and name in self.backup:
                 param.data = self.backup[name]
