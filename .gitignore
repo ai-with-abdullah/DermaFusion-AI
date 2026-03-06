@@ -18,12 +18,17 @@ env/
 
 # ─── Jupyter / IPython ────────────────────────────────────────────────────────
 .ipynb_checkpoints/
-*.ipynb
+# NOTE: *.ipynb is tracked intentionally (train_on_kaggle.ipynb, train_on_colab.ipynb)
 
 # ─── Model Weights & Checkpoints (too large for GitHub; use Kaggle / GDrive) ─
 outputs/weights/*.pth
 outputs/weights/*.pt
 outputs/weights/*.ckpt
+outputs/plots/
+outputs/attention_maps/
+outputs/explainability_heatmaps/
+outputs/segmentation_masks/
+outputs/test_explainability/
 *.pth
 *.pt
 *.ckpt

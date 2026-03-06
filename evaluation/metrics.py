@@ -178,18 +178,21 @@ def compute_pauc(
     min_tpr: float = 0.80,
 ) -> float:
     """
-    Computes the partial AUC (pAUC) at a minimum TPR threshold.
+    Computes the partial AUC (pAUC) above a minimum TPR (True Positive Rate) threshold.
 
-    ISIC 2024 challenge uses pAUC at ≥80% TPR as the primary metric
-    because high sensitivity is mandatory for clinical melanoma screening.
+    ISIC 2024 challenge uses pAUC at ≥80% TPR as the primary metric because
+    high sensitivity is mandatory for clinical melanoma screening.
+
+    FIXED (Upgrade #2): Docstring previously said '80% specificity' which is the
+    OPPOSITE of what the code computes. The code correctly filters tpr >= min_tpr
+    (i.e., sensitivity ≥80%), which matches the ISIC 2024 official metric definition.
 
     For multi-class: computes binary mel-vs-rest pAUC.
 
-    Normalization (Bug #5 fix):
-      The max possible AUC area above 80% TPR is 1.0 × (1 - 0.80) = 0.20.
-      We normalize by 0.2 to get a score in [0, 1] comparable to the
-      ISIC 2024 official leaderboard.  Previous code normalized by fpr_range,
-      which inflated scores for good models and was incomparable to benchmarks.
+    Normalization:
+      Max possible AUC above min_tpr=0.80 is 1.0 × (1 - 0.80) = 0.20.
+      We normalize by 0.20 to get a score in [0, 1] comparable to the
+      ISIC 2024 official leaderboard.
 
     Returns:
         pAUC score in [0, 1] (higher = better, ISIC-compatible)

@@ -74,7 +74,8 @@ def get_train_transforms() -> A.Compose:
         # Geometric
         A.RandomResizedCrop(
             size=(config.IMAGE_SIZE, config.IMAGE_SIZE),
-            scale=(0.5, 1.0),   # ↑ Widened from (0.75,1.0) — more diverse views
+            scale=(0.7, 1.0),   # Fixed: (0.5,1.0) was too aggressive — could crop lesion out entirely.
+                                # (0.7,1.0) retains ≥70% image area, safe for small VASC/DF lesions.
             ratio=(0.9, 1.1),
             p=1.0,
         ),

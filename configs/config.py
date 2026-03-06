@@ -1,5 +1,4 @@
 import os
-import sys
 import torch
 
 
@@ -34,7 +33,7 @@ class Config:
     # =========================================================================
     # Data & Classes
     # =========================================================================
-    IMAGE_SIZE  = 448    # EVA-02 Large native resolution (448×448) — SOTA standard
+    IMAGE_SIZE  = 448    # Upgraded to 448×448 — required by EVA-02 Large patch14_448
     NUM_CLASSES = 7
     CLASSES     = ['akiec', 'bcc', 'bkl', 'df', 'mel', 'nv', 'vasc']
     MEAN        = [0.485, 0.456, 0.406]
@@ -45,19 +44,16 @@ class Config:
     # =========================================================================
     SEED         = 42
     DEVICE       = "cuda" if torch.cuda.is_available() else "cpu"
-    # FIXED (Upgrade #3): macOS uses 'fork' multiprocessing which deadlocks
-    # with OpenCV and Albumentations inside DataLoader workers.
-    # Default to 0 workers on macOS, 4 on Linux/Colab.
-    NUM_WORKERS  = 0 if sys.platform == 'darwin' else 4
-    EPOCHS       = 2   # Kaggle smoke-test: 2 seg + 2 classification (change to 50 for full run)
-    PATIENCE     = 15
-    BATCH_SIZE   = 2           # EVA-02 Large requires smaller batch to fit VRAM
-    GRADIENT_ACCUMULATION_STEPS = 32  # effective batch = 2 × 32 = 64
+    NUM_WORKERS  = 4      # ↑ from 2 — faster data loading on Colab
+    EPOCHS       = 25     # Fresh training run from scratch
+    PATIENCE     = 15     # Match EarlyStopping call in train_classifier.py
+    BATCH_SIZE   = 2      # EVA-02 Large (448px) is memory-heavy — use batch=2 on T4/A100
+    GRADIENT_ACCUMULATION_STEPS = 32   # Effective batch = 64 (same as before)
 
     # =========================================================================
     # LR Warmup + Layer Decay (2026 SOTA training recipe)
     # =========================================================================
-    WARMUP_EPOCHS = 5      # Linear LR warmup before cosine decay kicks in
+    WARMUP_EPOCHS = 7      # Slightly longer warmup for larger model (more stable)
     LAYER_DECAY   = 0.75   # Each transformer layer gets LR × LAYER_DECAY^depth
 
     # =========================================================================
@@ -82,12 +78,13 @@ class Config:
     # Dual-Branch Fusion Classifier: EVA-02 + ConvNeXt V2
     # =========================================================================
 
-    # Branch A: EVA-02 Large (Global / Contextual) — 2026 SOTA
-    # EVA-02 Large @ 448px: 304M params, ImageNet top-1 89.6%, best open-source ViT for fine-grained classification
-    EVA02_BACKBONE   = "eva02_large_patch14_448.mim_in22k_ft_in22k_in1k"
+    # Branch A: EVA-02 Large (Global / Contextual)
+    # Upgraded from small (dim=384, 336px) → large (dim=1024, 448px) for max accuracy
+    # This is the exact backbone used by the ISIC 2024 top-3 winning solutions
+    EVA02_BACKBONE  = "eva02_large_patch14_448.mim_in22k_ft_in22k_in1k"
     EVA02_PRETRAINED = True
-    EVA02_EMBED_DIM  = 1024   # Large model output dim (was 384 for Small)
-    EVA02_LR         = 1e-5   # Lower LR for large pretrained model (was 2e-5 for Small)
+    EVA02_EMBED_DIM  = 1024   # EVA-02 Large output dimension (up from 384)
+    EVA02_LR            = 1e-5  # Slightly lower LR for larger pretrained model
     # Branch B: ConvNeXt V2 (Local / Texture)
     CONVNEXT_BACKBONE  = "convnextv2_base.fcmae_ft_in22k_in1k_384"
     CONVNEXT_PRETRAINED = True
@@ -111,8 +108,7 @@ class Config:
     BACKBONE_LR = 1e-5
     EMBED_DIM   = 1024
     NUM_HEADS   = 8
-    # EVA-02 Large is now the active backbone (upgraded from Small).
-    # Small reference: eva02_small_patch14_336.mim_in22k_ft_in1k (384px, embed=384)
+    # NOTE: EVA-02 Large is now active (upgraded from small on 2026-03-06)
 
     # =========================================================================
     # Evaluation

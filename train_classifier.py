@@ -44,9 +44,16 @@ def cutmix_data(images, labels, alpha=1.0):
     CutMix augmentation (Yun et al., ICCV 2019).
     Cuts a random rectangular patch from one image and pastes it into another.
     Labels are mixed proportionally to the patch area ratio (lambda).
+
+    FIXED (Fix #1): Now returns (images_mixed, targets_a, targets_b, lam, idx, bbox)
+    so the SAME permutation index and bounding box can be applied to images_seg,
+    ensuring the two branches always see aligned mixed images.
+    Returns: (mixed_images, targets_a, targets_b, lam, idx, (x1, y1, x2, y2))
     """
     if alpha <= 0:
-        return images, labels, labels, 1.0
+        B = images.size(0)
+        idx = torch.arange(B, device=images.device)
+        return images, labels, labels, 1.0, idx, (0, 0, 0, 0)
 
     lam = np.random.beta(alpha, alpha)
     B, C, H, W = images.shape
@@ -70,7 +77,18 @@ def cutmix_data(images, labels, alpha=1.0):
     # Recalculate lambda based on actual cut area
     lam = 1.0 - (x2 - x1) * (y2 - y1) / (W * H)
 
-    return images_mixed, labels, labels[idx], lam
+    return images_mixed, labels, labels[idx], lam, idx, (x1, y1, x2, y2)
+
+
+def apply_cutmix_bbox(tensor, shuffled_tensor, x1, y1, x2, y2):
+    """
+    Apply a pre-computed CutMix bounding box to a tensor using a pre-shuffled tensor.
+    Used to apply the SAME cut to images_seg as was applied to images.
+    FIXED (Fix #1): Allows reuse of exact bbox so both branches are aligned.
+    """
+    result = tensor.clone()
+    result[:, :, y1:y2, x1:x2] = shuffled_tensor[:, :, y1:y2, x1:x2]
+    return result
 
 
 def cutmix_criterion(criterion, logits, targets_a, targets_b, lam):
@@ -156,23 +174,30 @@ def train_one_epoch(model, ema, unet, loader, criterion, optimizer, scaler, devi
                 mask_logits = unet(images)             # segment ORIGINAL images
                 images_seg  = apply_mask(images, mask_logits)
 
-        # ── Now apply MixUp/CutMix to BOTH images and images_seg ─────────── #
+        # ── Now apply MixUp/CutMix to BOTH images and images_seg ─────── #
+        # FIX #1: Use the SAME permutation idx (MixUp) and the SAME bounding
+        # box (CutMix) for both branches so EVA-02 and ConvNeXt always see
+        # aligned mixed inputs. Previously a second independent randperm / a
+        # second cutmix_data call produced completely different blends.
         if use_mixup and not use_cutmix:
-            images, targets_a, targets_b, lam = mixup_data(
-                images, labels, config.MIXUP_ALPHA, use_cuda=(device == 'cuda')
-            )
-            # Apply the same permutation/lam to the segmented branch
+            lam = np.random.beta(config.MIXUP_ALPHA, config.MIXUP_ALPHA)
+            lam = max(lam, 1.0 - lam)           # keep dominant class ≥50%
             batch_size = images.size(0)
             idx = torch.randperm(batch_size, device=images.device)
-            images_seg_mixed = lam * images_seg + (1 - lam) * images_seg[idx]
-            images_seg = images_seg_mixed
+
+            # Apply SAME lam + SAME idx to BOTH branches
+            images    = lam * images    + (1 - lam) * images[idx]
+            images_seg = lam * images_seg + (1 - lam) * images_seg[idx]
+
+            targets_a, targets_b = labels, labels[idx]
             mix_fn = lambda logits: mixup_criterion(criterion, logits, targets_a, targets_b, lam)
 
         elif use_cutmix and not use_mixup:
-            images, targets_a, targets_b, lam = cutmix_data(images, labels, config.CUTMIX_ALPHA)
-            # Apply the same bounding box crop to images_seg
-            # Re-run cutmix on images_seg with same alpha to get matching masks
-            images_seg, _, _, _ = cutmix_data(images_seg, labels, config.CUTMIX_ALPHA)
+            # cutmix_data now returns (mixed, ta, tb, lam, idx, bbox) — Fix #1
+            images, targets_a, targets_b, lam, idx, (x1, y1, x2, y2) = \
+                cutmix_data(images, labels, config.CUTMIX_ALPHA)
+            # Apply the EXACT same idx + bbox to images_seg
+            images_seg = apply_cutmix_bbox(images_seg, images_seg[idx], x1, y1, x2, y2)
             mix_fn = lambda logits: cutmix_criterion(criterion, logits, targets_a, targets_b, lam)
         else:
             mix_fn = None
@@ -192,7 +217,7 @@ def train_one_epoch(model, ema, unet, loader, criterion, optimizer, scaler, devi
 
         if (i + 1) % accumulation_steps == 0 or (i + 1) == len(loader):
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
@@ -201,13 +226,22 @@ def train_one_epoch(model, ema, unet, loader, criterion, optimizer, scaler, devi
 
         losses.update(loss.item() * accumulation_steps, images.size(0))
 
-        probs = torch.softmax(logits, dim=1).detach().cpu().numpy()
-        all_targets.extend(labels.cpu().numpy())
-        all_probs.extend(probs)
+        # FIX #9: Only accumulate train metrics on NON-mixed batches.
+        # During MixUp/CutMix the target is ONE of the two blended labels, so
+        # comparing hard predictions to hard labels inflates train AUC artificially.
+        if mix_fn is None:
+            probs = torch.softmax(logits, dim=1).detach().cpu().numpy()
+            all_targets.extend(labels.cpu().numpy())
+            all_probs.extend(probs)
 
         pbar.set_postfix({'Loss': f'{losses.avg:.4f}'})
 
-    metrics = compute_metrics(np.array(all_targets), np.array(all_probs))
+    if len(all_probs) == 0:
+        # All batches were augmented — return dummy metric
+        dummy = np.ones((1, config.NUM_CLASSES)) / config.NUM_CLASSES
+        metrics = compute_metrics(np.array([0]), dummy)
+    else:
+        metrics = compute_metrics(np.array(all_targets), np.array(all_probs))
     return losses.avg, metrics
 
 
@@ -279,6 +313,19 @@ def main():
     if os.path.exists(best_unet_path):
         unet.load_state_dict(torch.load(best_unet_path, map_location=config.DEVICE))
         logger.info(f"Loaded segmentation weights from {best_unet_path}")
+    else:
+        # FIXED (Fix #10): Loud, visible warning when UNet weights are missing.
+        # Previously this was silent — training would proceed with a random UNet,
+        # making every images_seg fed to ConvNeXt branch incorrect garbage.
+        import time
+        logger.warning("=" * 70)
+        logger.warning("  ⚠  UNet weights NOT FOUND at:")
+        logger.warning(f"     {best_unet_path}")
+        logger.warning("  ⚠  ConvNeXt branch will receive INCORRECT segmentation masks.")
+        logger.warning("  ⚠  Run train_segmentation.py FIRST for correct behaviour.")
+        logger.warning("  ⚠  Proceeding with random UNet in 3 seconds ...")
+        logger.warning("=" * 70)
+        time.sleep(3)
 
     # ── Classification model ────────────────────────────────────────────── #
     model = DualBranchFusionClassifier(
@@ -417,8 +464,13 @@ def main():
 
     # ── Training Loop ────────────────────────────────────────────────────── #
     for epoch in range(start_epoch, config.EPOCHS + 1):
+        # FIXED (Fix #11): Step the scheduler at START of epoch so get_last_lr()
+        # reflects the LR actually used for THIS epoch's training (not last epoch's).
+        # Exception: on epoch 1 from scratch we still want warmup from 0, so the
+        # WarmupCosineScheduler's _epoch counter is already at 0 before first step.
+        scheduler.step()
         current_lrs = scheduler.get_last_lr()
-        logger.info(f"\nEpoch {epoch}/{config.EPOCHS}  |  LR: {current_lrs[2]:.2e} (head)")
+        logger.info(f"\nEpoch {epoch}/{config.EPOCHS}  |  LR: {current_lrs[-1]:.2e} (head)")
 
         train_loss, train_metrics = train_one_epoch(
             model, ema, unet, train_loader, criterion, optimizer, scaler,
@@ -432,8 +484,7 @@ def main():
         if ema is not None:
             ema.restore(model)               # restore real training weights!
 
-        # LR scheduler step (warmup → cosine)
-        scheduler.step()
+        # LR scheduler step is now at the TOP of the loop (Fix #11)
 
         logger.info(
             f"Train — Loss: {train_loss:.4f}  Acc: {train_metrics['accuracy']:.4f}  "
@@ -454,8 +505,10 @@ def main():
             'val_ece':      val_metrics['ece'],
         })
 
-        # Use balanced_accuracy — it steadily improves and is robust to AUC bugs
-        early_stopping(val_metrics['balanced_accuracy'], model)
+        # FIXED (Fix #2 / Upgrade #1): Pass ema so EarlyStopping saves EMA shadow
+        # weights — not the raw training weights. This ensures best_dual_branch_fusion.pth
+        # contains the weights that ACTUALLY produced the val_metric shown in logs.
+        early_stopping(val_metrics['balanced_accuracy'], model, ema=ema)
 
         # ── Save resume checkpoint after every epoch ──────────────────── #
         ckpt = {

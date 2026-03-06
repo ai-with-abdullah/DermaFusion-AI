@@ -308,20 +308,22 @@ def get_focal_loss(class_weights, device, gamma=2.0) -> FocalLoss:
 def get_combined_class_loss(class_weights, device, num_classes, smoothing=0.1, mel_idx=4) -> nn.Module:
     """
     Recommended factory for multi-dataset training.
-    Returns AsymmetricMelFocalLoss wrapping CombinedClassLoss (Focal + SCE).
+    Returns CombinedClassLoss (LabelSmoothingFocalLoss + SymmetricCE).
 
-    Upgrade: now wraps CombinedClassLoss with AsymmetricMelFocalLoss so that
-    melanoma false negatives receive a 3× extra penalty during training.
-    Research: MedGemma study achieved 93% mel recall using this asymmetric strategy.
+    FIXED: Removed AsymmetricMelFocalLoss wrapper and reduced gamma from 3.0→2.0.
+    Previously three separate mel penalties were stacked (class_weight ×3, gamma=3,
+    fn_weight=3), producing up to 27× loss signal for mel FNs — causing the model
+    to over-predict mel at the cost of all other classes (VASC, DF collapse).
+
+    Current strategy (balanced):
+      - class_weights[mel] ×2 (in get_class_weights_from_records)
+      - gamma=2.0 (standard Focal Loss)
+      - label_smoothing=0.1 (handles multi-dataset label noise)
+    This still prioritises mel clinically without destroying other class learning.
     """
-    base = CombinedClassLoss(
+    return CombinedClassLoss(
         num_classes=num_classes,
         class_weights=class_weights.to(device) if class_weights is not None else None,
         smoothing=smoothing,
-        gamma=3.0,   # ↑ from 2.0 — stronger focus on hard/rare samples (60:1 imbalance)
-    )
-    return AsymmetricMelFocalLoss(
-        base_loss=base,
-        mel_idx=mel_idx,
-        fn_weight=3.0,   # mel FN penalty: 3× extra loss on missed melanoma samples
+        gamma=2.0,   # Standard focal gamma — triple-stacking was too aggressive
     )
