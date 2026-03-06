@@ -52,8 +52,12 @@ class Config:
     NUM_WORKERS  = 4      # ↑ from 2 — faster data loading on Colab
     EPOCHS       = 25     # Fresh training run from scratch
     PATIENCE     = 15     # Match EarlyStopping call in train_classifier.py
-    BATCH_SIZE   = 2      # EVA-02 Large (448px) is memory-heavy — use batch=2 on T4/A100
-    GRADIENT_ACCUMULATION_STEPS = 32   # Effective batch = 64 (same as before)
+    BATCH_SIZE     = 2    # EVA-02 Large (448px) is memory-heavy — use batch=2 on T4/A100
+    SEG_BATCH_SIZE = 8    # Swin-Tiny (95M params, 224px) is much lighter → batch=8 per GPU
+                          # With 2×T4 GPUs + DataParallel: effective seg batch = 16
+                          # DataParallel is only efficient when batch >= 2×n_gpus (else overhead > gain)
+    GRADIENT_ACCUMULATION_STEPS = 32   # Effective classifier batch = 64 (same as before)
+
 
     # =========================================================================
     # LR Warmup + Layer Decay (2026 SOTA training recipe)

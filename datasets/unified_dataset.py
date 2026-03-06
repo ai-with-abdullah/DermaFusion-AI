@@ -598,13 +598,19 @@ def get_weighted_sampler(records: List[SkinLesionRecord]) -> WeightedRandomSampl
     return sampler
 
 
-def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None):
+def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batch_size: int = None):
     """
     Main entry point. Loads all available datasets, merges, splits, and
     returns (train_loader, val_loader, test_loader, train_records).
 
+    batch_size: overrides config.BATCH_SIZE when provided.
+                Useful for segmentation training (Swin-Tiny can handle larger batches
+                than the classifier's EVA-02 Large which needs batch=2).
     Datasets not found on disk are silently skipped.
     """
+    if batch_size is None:
+        batch_size = config.BATCH_SIZE
+
     print("\n" + "="*70)
     print("[UnifiedDataset] Scanning available datasets...")
 
@@ -647,16 +653,16 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None):
     sampler = get_weighted_sampler(train_records)
 
     train_loader = DataLoader(
-        train_ds, batch_size=config.BATCH_SIZE,
+        train_ds, batch_size=batch_size,
         sampler=sampler,
         num_workers=config.NUM_WORKERS, pin_memory=True, drop_last=True
     )
     val_loader = DataLoader(
-        val_ds, batch_size=config.BATCH_SIZE, shuffle=False,
+        val_ds, batch_size=batch_size, shuffle=False,
         num_workers=config.NUM_WORKERS, pin_memory=True
     )
     test_loader = DataLoader(
-        test_ds, batch_size=config.BATCH_SIZE, shuffle=False,
+        test_ds, batch_size=batch_size, shuffle=False,
         num_workers=config.NUM_WORKERS, pin_memory=True
     )
 

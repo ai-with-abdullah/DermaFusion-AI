@@ -83,8 +83,13 @@ def main():
     
 
     # ── Dataset (uses unified multi-dataset loader) ────────────────────── #
+    # Use SEG_BATCH_SIZE (larger) instead of BATCH_SIZE:
+    # Swin-Tiny (95M, 224px) is much lighter than EVA-02 Large — fits batch=8+ per GPU
+    seg_batch = getattr(config, 'SEG_BATCH_SIZE', 8)
     train_loader, val_loader, test_loader, _ = get_unified_dataloaders(
-        config.DATA_DIR, masks_dir=os.path.join(config.DATA_DIR, "masks")
+        config.DATA_DIR,
+        masks_dir=os.path.join(config.DATA_DIR, "masks"),
+        batch_size=seg_batch,
     )
 
     # ── Segmentation model: Swin U-Net (or fallback) ─────────────────────── #
@@ -95,13 +100,19 @@ def main():
         model = LightweightUNet(n_channels=3, n_classes=1).to(config.DEVICE)
         logger.info("Using LightweightUNet (legacy fallback)")
 
-    # ── Multi-GPU: wrap with DataParallel if 2+ GPUs available ────────────── #
+    # ── Multi-GPU: DataParallel only when per-GPU batch is ≥ 2 ───────────── #
+    # DataParallel overhead > gain when each GPU sees only 1 image.
+    # With SEG_BATCH_SIZE=8 and 2 GPUs: each GPU gets 4 images → worthwhile.
     n_gpus = torch.cuda.device_count()
-    if n_gpus > 1:
-        logger.info(f"Using {n_gpus} GPUs with DataParallel: {[torch.cuda.get_device_name(i) for i in range(n_gpus)]}")
+    per_gpu_batch = seg_batch // max(n_gpus, 1)
+    use_ddp = (n_gpus > 1) and (per_gpu_batch >= 2)
+    if use_ddp:
+        logger.info(f"Using {n_gpus} GPUs with DataParallel (batch={seg_batch}, {per_gpu_batch}/GPU)")
         model = torch.nn.DataParallel(model)
     else:
-        logger.info(f"Using single GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
+        if n_gpus > 1:
+            logger.info(f"Skipping DataParallel: per-GPU batch {per_gpu_batch} < 2 (overhead > gain)")
+        logger.info(f"GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
     # Helper: unwrap DataParallel to get raw model for weight saving
     raw_model = model.module if isinstance(model, torch.nn.DataParallel) else model
