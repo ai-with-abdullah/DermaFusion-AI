@@ -640,9 +640,13 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
     train_records, val_records, test_records = _patient_aware_split(all_records)
 
     # FIXED (Fix #4): Balance ISIC2024 negatives AFTER the split (not before).
-    # Previously _parse_isic2024() downsampled before splitting, so val/test were
-    # drawn from a pre-balanced pool that doesn't represent real class distribution.
     train_records = _downsample_isic2024_train(train_records)
+
+    # FIXED (Val Speed): Also downsample ISIC2024 val/test negatives.
+    # Without this, val set has ~40K ISIC2024 records → 17K steps → 12 hrs/epoch.
+    # Using a higher ratio (20:1) than train keeps evaluation representative.
+    val_records  = _downsample_isic2024_val(val_records)
+    test_records = _downsample_isic2024_val(test_records)
 
     # Build datasets
     train_ds = UnifiedSkinDataset(train_records, transforms=get_train_transforms())
@@ -652,17 +656,21 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
     # Weighted sampler for train to handle class imbalance
     sampler = get_weighted_sampler(train_records)
 
+    # Val/test use a larger batch — no gradients needed, so memory is cheaper.
+    # This makes validation ~4× faster per step.
+    val_batch = getattr(config, 'VAL_BATCH_SIZE', 16)
+
     train_loader = DataLoader(
         train_ds, batch_size=batch_size,
         sampler=sampler,
         num_workers=config.NUM_WORKERS, pin_memory=True, drop_last=True
     )
     val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False,
+        val_ds, batch_size=val_batch, shuffle=False,
         num_workers=config.NUM_WORKERS, pin_memory=True
     )
     test_loader = DataLoader(
-        test_ds, batch_size=batch_size, shuffle=False,
+        test_ds, batch_size=val_batch, shuffle=False,
         num_workers=config.NUM_WORKERS, pin_memory=True
     )
 
@@ -671,32 +679,56 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
 
 def _downsample_isic2024_train(
     train_records: List[SkinLesionRecord],
-    neg_to_pos_ratio: int = None,   # None → reads from config
+    neg_to_pos_ratio: int = None,
     seed: int = config.SEED,
 ) -> List[SkinLesionRecord]:
     """
-    Downsamples ISIC2024 negative (nv) records in train split to neg_to_pos_ratio × positives.
-    Ratio is read from config.ISIC2024_NEG_TO_POS_RATIO (default 50) so it can be tuned
-    without touching this function.
-
-    Increased from 3 → 50 to compensate for missing ISIC 2019 images:
-      pos=~300 × 50 = ~15,000 ISIC2024 negatives used per epoch
-      (was 3 → only ~900, far under-utilising the 400K dataset)
+    Downsamples ISIC2024 negative (nv) records in TRAIN split.
+    Ratio read from config.ISIC2024_NEG_TO_POS_RATIO.
     """
     from configs.config import config as _cfg
     if neg_to_pos_ratio is None:
-        neg_to_pos_ratio = getattr(_cfg, 'ISIC2024_NEG_TO_POS_RATIO', 50)
+        neg_to_pos_ratio = getattr(_cfg, 'ISIC2024_NEG_TO_POS_RATIO', 10)
+    return _downsample_isic2024(
+        train_records, neg_to_pos_ratio, seed, split_name='Train'
+    )
+
+
+def _downsample_isic2024_val(
+    records: List[SkinLesionRecord],
+    neg_to_pos_ratio: int = 20,
+    seed: int = config.SEED,
+) -> List[SkinLesionRecord]:
+    """
+    Downsamples ISIC2024 negative (nv) records in VAL/TEST split.
+    Uses ratio=20 (2× train ratio) — more representative than train,
+    but avoids the 40K-record validation set that caused 12 hrs/epoch.
+    Val set goes from ~40K → ~6K records with ratio=20.
+    """
+    return _downsample_isic2024(records, neg_to_pos_ratio, seed, split_name='Val')
+
+
+def _downsample_isic2024(
+    records: List[SkinLesionRecord],
+    neg_to_pos_ratio: int,
+    seed: int = config.SEED,
+    split_name: str = '',
+) -> List[SkinLesionRecord]:
+    """
+    Shared helper: downsample ISIC2024 nv negatives to neg_to_pos_ratio × positives.
+    """
+    from configs.config import config as _cfg
     mel_idx = _cfg.CLASSES.index('mel') if 'mel' in _cfg.CLASSES else 4
     nv_idx  = _cfg.CLASSES.index('nv')  if 'nv'  in _cfg.CLASSES else 5
 
-    isic24_pos = [r for r in train_records if r.dataset_name == 'ISIC2024' and r.label_idx == mel_idx]
-    isic24_neg = [r for r in train_records if r.dataset_name == 'ISIC2024' and r.label_idx == nv_idx]
-    other      = [r for r in train_records
+    isic24_pos = [r for r in records if r.dataset_name == 'ISIC2024' and r.label_idx == mel_idx]
+    isic24_neg = [r for r in records if r.dataset_name == 'ISIC2024' and r.label_idx == nv_idx]
+    other      = [r for r in records
                   if r.dataset_name != 'ISIC2024'
                   or (r.label_idx != mel_idx and r.label_idx != nv_idx)]
 
     if not isic24_pos or not isic24_neg:
-        return train_records   # Nothing to downsample
+        return records
 
     target_neg = min(len(isic24_pos) * neg_to_pos_ratio, len(isic24_neg))
     rng = np.random.default_rng(seed)
@@ -704,7 +736,8 @@ def _downsample_isic2024_train(
     isic24_neg_sampled = [isic24_neg[i] for i in sorted(neg_keep_idx)]
 
     result = other + isic24_pos + isic24_neg_sampled
-    print(f"  [ISIC2024 Train Balance] ratio={neg_to_pos_ratio}:1 | pos={len(isic24_pos)}, "
+    label = f'[ISIC2024 {split_name} Balance]' if split_name else '[ISIC2024 Balance]'
+    print(f"  {label} ratio={neg_to_pos_ratio}:1 | pos={len(isic24_pos)}, "
           f"neg={len(isic24_neg)} → {len(isic24_neg_sampled)} "
           f"({neg_to_pos_ratio}:1 neg:pos ratio)")
     return result

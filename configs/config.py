@@ -55,6 +55,7 @@ class Config:
     PATIENCE     = 15     # Match EarlyStopping call in train_classifier.py
     BATCH_SIZE     = 4    # Increased from 2: 2 images/GPU with DataParallel → overhead < gain
     SEG_BATCH_SIZE = 8    # Swin-Tiny (95M, 224px): batch=8 per GPU
+    VAL_BATCH_SIZE = 16   # Val/test: no gradients → memory cheaper → 4× larger batch → 4× faster val
     GRADIENT_ACCUMULATION_STEPS = 16   # Effective batch = 64 (batch=4 × accum=16)
 
 
