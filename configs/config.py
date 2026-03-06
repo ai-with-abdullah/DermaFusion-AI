@@ -30,6 +30,11 @@ class Config:
     ISIC_2024_DIR = os.path.join(DATA_DIR, "isic_2024")
     PH2_DIR       = os.path.join(DATA_DIR, "ph2")
 
+    # ISIC 2024 downsampling: use more negatives since ISIC 2019 images are unavailable
+    # pos=~300 mel cases from ISIC 2024; ratio=50 → ~15,000 negatives used in training
+    # (was 3 → only ~900 negatives — too little from a 400K dataset)
+    ISIC2024_NEG_TO_POS_RATIO = 50
+
     # =========================================================================
     # Data & Classes
     # =========================================================================

@@ -665,17 +665,21 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None):
 
 def _downsample_isic2024_train(
     train_records: List[SkinLesionRecord],
-    neg_to_pos_ratio: int = 3,
+    neg_to_pos_ratio: int = None,   # None → reads from config
     seed: int = config.SEED,
 ) -> List[SkinLesionRecord]:
     """
     Downsamples ISIC2024 negative (nv) records in train split to neg_to_pos_ratio × positives.
+    Ratio is read from config.ISIC2024_NEG_TO_POS_RATIO (default 50) so it can be tuned
+    without touching this function.
 
-    FIXED (Fix #4): Downsampling is applied ONLY to train_records AFTER the split,
-    so val and test sets reflect the real ISIC2024 class distribution, not a
-    pre-balanced sample that would bias evaluation metrics.
+    Increased from 3 → 50 to compensate for missing ISIC 2019 images:
+      pos=~300 × 50 = ~15,000 ISIC2024 negatives used per epoch
+      (was 3 → only ~900, far under-utilising the 400K dataset)
     """
     from configs.config import config as _cfg
+    if neg_to_pos_ratio is None:
+        neg_to_pos_ratio = getattr(_cfg, 'ISIC2024_NEG_TO_POS_RATIO', 50)
     mel_idx = _cfg.CLASSES.index('mel') if 'mel' in _cfg.CLASSES else 4
     nv_idx  = _cfg.CLASSES.index('nv')  if 'nv'  in _cfg.CLASSES else 5
 
@@ -694,7 +698,7 @@ def _downsample_isic2024_train(
     isic24_neg_sampled = [isic24_neg[i] for i in sorted(neg_keep_idx)]
 
     result = other + isic24_pos + isic24_neg_sampled
-    print(f"  [ISIC2024 Train Balance] pos={len(isic24_pos)}, "
+    print(f"  [ISIC2024 Train Balance] ratio={neg_to_pos_ratio}:1 | pos={len(isic24_pos)}, "
           f"neg={len(isic24_neg)} → {len(isic24_neg_sampled)} "
           f"({neg_to_pos_ratio}:1 neg:pos ratio)")
     return result
