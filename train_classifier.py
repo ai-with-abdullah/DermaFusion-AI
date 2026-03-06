@@ -339,7 +339,20 @@ def main():
         dropout=config.FUSION_DROPOUT,
     ).to(config.DEVICE)
 
-    ema = ModelEMA(model, decay=config.EMA_DECAY, device=config.DEVICE) if config.USE_EMA else None
+    # ── Multi-GPU: wrap both models with DataParallel if 2+ GPUs ──────── #
+    n_gpus = torch.cuda.device_count()
+    if n_gpus > 1:
+        logger.info(f"Using {n_gpus} GPUs with DataParallel")
+        unet  = torch.nn.DataParallel(unet)
+        model = torch.nn.DataParallel(model)
+    else:
+        logger.info(f"Using single GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
+
+    # raw_model: unwrapped for EMA, param groups, and weight saving
+    raw_model = model.module if isinstance(model, torch.nn.DataParallel) else model
+
+    ema = ModelEMA(raw_model, decay=config.EMA_DECAY, device=config.DEVICE) if config.USE_EMA else None
+
 
     # ── 3-Group Differential LR Optimizer ──────────────────────────────── #
     # ── LLRD: Layer-wise LR Decay for EVA-02 ───────────────────────────── #
@@ -404,10 +417,10 @@ def main():
         return param_groups
 
     eva02_param_groups    = build_llrd_param_groups(
-        model.branch_eva, config.EVA02_LR, config.LAYER_DECAY, 'EVA-02'
+        raw_model.branch_eva, config.EVA02_LR, config.LAYER_DECAY, 'EVA-02'
     )
-    convnext_params = model.get_convnext_params()
-    head_params     = model.get_head_params()
+    convnext_params = raw_model.get_convnext_params()
+    head_params     = raw_model.get_head_params()
 
     logger.info(f"Parameter groups:")
     logger.info(f"  EVA-02 (LLRD, {len(eva02_param_groups)} groups): base_lr={config.EVA02_LR}, decay={config.LAYER_DECAY}")
@@ -505,15 +518,14 @@ def main():
             'val_ece':      val_metrics['ece'],
         })
 
-        # FIXED (Fix #2 / Upgrade #1): Pass ema so EarlyStopping saves EMA shadow
-        # weights — not the raw training weights. This ensures best_dual_branch_fusion.pth
-        # contains the weights that ACTUALLY produced the val_metric shown in logs.
-        early_stopping(val_metrics['balanced_accuracy'], model, ema=ema)
+        # FIXED (Fix #2): Pass ema + raw_model so EarlyStopping saves EMA shadow
+        # weights — weights that ACTUALLY produced val_metric shown in logs.
+        early_stopping(val_metrics['balanced_accuracy'], raw_model, ema=ema)
 
         # ── Save resume checkpoint after every epoch ──────────────────── #
         ckpt = {
             'epoch':      epoch,
-            'model':      model.state_dict(),
+            'model':      raw_model.state_dict(),
             'optimizer':  optimizer.state_dict(),
             'scheduler':  scheduler.state_dict(),
             'history':    history,

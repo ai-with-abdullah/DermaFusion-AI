@@ -94,8 +94,20 @@ def main():
     else:
         model = LightweightUNet(n_channels=3, n_classes=1).to(config.DEVICE)
         logger.info("Using LightweightUNet (legacy fallback)")
-    
+
+    # ── Multi-GPU: wrap with DataParallel if 2+ GPUs available ────────────── #
+    n_gpus = torch.cuda.device_count()
+    if n_gpus > 1:
+        logger.info(f"Using {n_gpus} GPUs with DataParallel: {[torch.cuda.get_device_name(i) for i in range(n_gpus)]}")
+        model = torch.nn.DataParallel(model)
+    else:
+        logger.info(f"Using single GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
+
+    # Helper: unwrap DataParallel to get raw model for weight saving
+    raw_model = model.module if isinstance(model, torch.nn.DataParallel) else model
+
     # Optimizer & Scheduler
+
     optimizer = optim.AdamW(model.parameters(), lr=config.SEG_LR, weight_decay=config.SEG_WEIGHT_DECAY)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.EPOCHS)
     
@@ -123,7 +135,7 @@ def main():
         logger.info(f"Val Loss: {val_loss:.4f} | Val Dice: {val_dice:.4f}")
         
         # We want to maximize val_dice, so we use val_dice directly.
-        early_stopping(val_dice, model)
+        early_stopping(val_dice, raw_model)
         if early_stopping.early_stop:
             logger.info("Early stopping triggered")
             break
