@@ -28,6 +28,7 @@ class ModelEMA:
         self.device = device
         self._step  = 0
         self.register(model)
+        
 
     @staticmethod
     def _unwrap(model):
