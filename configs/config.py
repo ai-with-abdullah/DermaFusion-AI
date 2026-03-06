@@ -53,10 +53,12 @@ class Config:
     NUM_WORKERS  = 4      # ↑ from 2 — faster data loading on Colab
     EPOCHS       = 25     # Fresh training run from scratch
     PATIENCE     = 15     # Match EarlyStopping call in train_classifier.py
-    BATCH_SIZE     = 4    # Increased from 2: 2 images/GPU with DataParallel → overhead < gain
-    SEG_BATCH_SIZE = 8    # Swin-Tiny (95M, 224px): batch=8 per GPU
+    BATCH_SIZE     = 2    # 401.6M model: batch=4 causes GPU 0 OOM with DataParallel gather.
+                          # batch=2 → DataParallel guard skips (per_gpu_batch=1<2) → single GPU only.
+                          # Safer: single GPU with full memory for activations + optimizer + EMA.
+    SEG_BATCH_SIZE = 8    # Swin-Tiny (95M, 224px): batch=8 per GPU (lighter model)
     VAL_BATCH_SIZE = 16   # Val/test: no gradients → memory cheaper → 4× larger batch → 4× faster val
-    GRADIENT_ACCUMULATION_STEPS = 16   # Effective batch = 64 (batch=4 × accum=16)
+    GRADIENT_ACCUMULATION_STEPS = 32   # Effective batch = 64 (batch=2 × accum=32)
 
 
     # =========================================================================
@@ -70,6 +72,8 @@ class Config:
     # =========================================================================
     USE_EMA       = True
     EMA_DECAY     = 0.9998
+    EMA_DEVICE    = 'cpu'   # Shadow weights on CPU → frees ~1.6GB from GPU 0
+                            # Small speed cost (EMA update copies to CPU) is worth the OOM fix
     MIXUP_ALPHA   = 0.8
     USE_CUTMIX    = True       # ← Now actually implemented in trainer
     CUTMIX_ALPHA  = 1.0

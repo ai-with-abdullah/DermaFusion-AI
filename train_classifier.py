@@ -11,6 +11,9 @@ Key upgrades over previous version:
 """
 
 import os
+# Reduce CUDA memory fragmentation — recommended by PyTorch for large models
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+
 import math
 import torch
 import torch.optim as optim
@@ -358,7 +361,8 @@ def main():
     raw_model = model.module if isinstance(model, torch.nn.DataParallel) else model
 
 
-    ema = ModelEMA(raw_model, decay=config.EMA_DECAY, device=config.DEVICE) if config.USE_EMA else None
+    ema_device = getattr(config, 'EMA_DEVICE', config.DEVICE)  # default: cpu to free GPU memory
+    ema = ModelEMA(raw_model, decay=config.EMA_DECAY, device=ema_device) if config.USE_EMA else None
 
 
     # ── 3-Group Differential LR Optimizer ──────────────────────────────── #
