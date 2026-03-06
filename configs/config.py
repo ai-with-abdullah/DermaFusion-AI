@@ -73,7 +73,8 @@ class Config:
     USE_EMA       = True
     EMA_DECAY     = 0.9998
     EMA_DEVICE    = 'cpu'   # Shadow weights on CPU → frees ~1.6GB from GPU 0
-                            # Small speed cost (EMA update copies to CPU) is worth the OOM fix
+    GRADIENT_CHECKPOINTING = True  # Recomputes activations during backward → saves ~3GB GPU memory
+                                   # ~20% slower per step, essential for EVA-02 Large on T4 (14.5GB)
     MIXUP_ALPHA   = 0.8
     USE_CUTMIX    = True       # ← Now actually implemented in trainer
     CUTMIX_ALPHA  = 1.0

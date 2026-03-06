@@ -13,6 +13,8 @@ Key upgrades over previous version:
 import os
 # Reduce CUDA memory fragmentation — recommended by PyTorch for large models
 os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+os.environ.setdefault('PYTORCH_ALLOC_CONF', 'expandable_segments:True')  # PyTorch >= 2.2
+
 
 import math
 import torch
@@ -341,6 +343,24 @@ def main():
         num_classes=config.NUM_CLASSES,
         dropout=config.FUSION_DROPOUT,
     ).to(config.DEVICE)
+
+    # ── Gradient Checkpointing: trade compute for memory ─────────────────── #
+    # EVA-02 Large (307M) + ConvNeXt V2 Base (88M) + AdamW optimizer states
+    # (4.8GB) fills T4's 14.5GB even at batch=2. Gradient checkpointing
+    # recomputes activations during backward instead of storing them.
+    # Saves ~2-4GB of activation memory at ~20% speed cost — worth it.
+    if getattr(config, 'GRADIENT_CHECKPOINTING', True):
+        try:
+            raw_model_pre_ddp = model  # not yet wrapped
+            raw_model_pre_ddp.branch_eva.backbone.set_grad_checkpointing(enable=True)
+            logger.info("Gradient checkpointing enabled on EVA-02 backbone")
+        except Exception:
+            pass
+        try:
+            raw_model_pre_ddp.branch_conv.backbone.set_grad_checkpointing(enable=True)
+            logger.info("Gradient checkpointing enabled on ConvNeXt V2 backbone")
+        except Exception:
+            pass
 
     # ── Multi-GPU: DataParallel only when per-GPU batch is ≥ 2 ──────────── #
     # DataParallel overhead > gain when each GPU sees only 1 image.
