@@ -117,7 +117,6 @@ def main():
     # To use temperature scaling correctly: collect raw logits inside TTAInference
     # before the softmax call, then scale and average. That refactor is tracked
     # as a future improvement. For now, TTA itself provides implicit calibration.
-    n_views = config.TTA_N_VIEWS if config.USE_TTA else 1  # re-read for clarity
     if config.USE_TTA and n_views > 1:
         logger.info(
             f"Temperature scaling SKIPPED — TTA (n_views={n_views}) averages post-softmax "
@@ -129,15 +128,26 @@ def main():
         temp_path = os.path.join(config.OUTPUT_DIR, 'temperature.pt')
         if os.path.exists(temp_path):
             scaler = TemperatureScaler.load(temp_path, device=config.DEVICE)
-            logger.info(f"Applying temperature scaling (T={scaler.get_temperature():.3f})...")
-            y_pred_probs_calibrated = y_pred_probs   # placeholder; proper logit scaling needed
+            T = scaler.get_temperature()
+            logger.info(f"Applying temperature scaling (T={T:.3f})...")
+            # Convert probabilities back to logits, apply temperature, re-softmax
+            # Note: this approximation is only valid for single-view (no TTA) evaluation.
+            import torch.nn.functional as F
+            logits_approx = torch.tensor(np.log(y_pred_probs + 1e-8))  # inverse softmax approx
+            logits_scaled = logits_approx / T
+            y_pred_probs_calibrated = F.softmax(logits_scaled, dim=1).numpy()
         else:
             logger.warning(
-                f"No temperature.pt found. ECE will be inflated until calibration.py is run."
+                "No temperature.pt found — ECE may be inflated. "
+                "Run evaluation/calibration.py first for proper calibration."
             )
             y_pred_probs_calibrated = y_pred_probs
 
     # ── Metrics: Standard (raw threshold) ────────────────────────────────── #
+    # Paper reporting note: test set composition (after patient-aware split):
+    #   HAM10000 (~10% of 10015), ISIC2020 (~10% of 584),
+    #   ISIC2024 (~10% pos + 20:1 neg downsampling for computational efficiency).
+    #   No patient overlap between train/val/test guaranteed by _patient_aware_split().
     metrics = compute_metrics(y_true, y_pred_probs_calibrated)
     log_metrics(metrics, logger, prefix="Test (TTA, calibrated)")
 

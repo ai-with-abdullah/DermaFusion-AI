@@ -646,7 +646,10 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
     # Without this, val set has ~40K ISIC2024 records → 17K steps → 12 hrs/epoch.
     # Using a higher ratio (20:1) than train keeps evaluation representative.
     val_records  = _downsample_isic2024_val(val_records)
-    test_records = _downsample_isic2024_val(test_records)
+    test_records = _downsample_isic2024_val(test_records, neg_to_pos_ratio=50)
+    # Note for paper: test uses ratio=50:1 (more representative than val ratio=20:1),
+    # val uses ratio=20:1 (faster per-epoch validation). Both maintain class proportions.
+
 
     # Build datasets
     train_ds = UnifiedSkinDataset(train_records, transforms=get_train_transforms())
