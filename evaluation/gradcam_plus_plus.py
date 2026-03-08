@@ -121,11 +121,18 @@ class ConvNeXtGradCAMPP:
 
         try:
             x = image_tensor.unsqueeze(0).to(self.device).requires_grad_(True)
-            x_seg = (
-                image_seg_tensor.unsqueeze(0).to(self.device)
-                if image_seg_tensor is not None
-                else torch.zeros_like(x)
-            )
+            # FIX: Use original image as fallback when seg is None or flat.
+            # Previously used torch.zeros_like(x) → ConvNeXt saw near-black image
+            # → GradCAM focused on border resizing artifacts instead of the lesion.
+            if image_seg_tensor is not None:
+                seg_std = image_seg_tensor.std().item()
+                x_seg = (
+                    image_seg_tensor.unsqueeze(0).to(self.device)
+                    if seg_std > 0.03   # seg is informative
+                    else x.detach()     # flat mask → use original to avoid border artifact
+                )
+            else:
+                x_seg = x.detach()  # no seg → use original image
 
             logits, _ = self.model(x, x_seg)
             score = logits[0, target_class]
@@ -209,17 +216,30 @@ class EVAGradCAMPP:
 
         attn_maps = []
 
-        # Hook attention weights from each transformer block
+        # FIX: Hook attn_drop (nn.Dropout inside EvaAttention) instead of the
+        # attention module output. timm's EvaAttention.forward() returns only the
+        # projected output tensor — it never returns attention weights in a tuple.
+        # attn_drop always receives the post-softmax (B, heads, N, N) attention
+        # matrix as its first positional input, making it a reliable hook point.
         def attn_hook(m, inp, out):
-            # MultiheadAttention returns (output, attn_weights)
-            if isinstance(out, tuple) and len(out) >= 2 and out[1] is not None:
-                attn_maps.append(out[1].detach().cpu())
+            # inp[0] is the attention weight matrix (B, heads, N, N)
+            if inp and inp[0] is not None and inp[0].dim() == 4:
+                attn_maps.append(inp[0].detach().cpu())
 
         handles = []
         for block in getattr(eva_backbone, 'blocks', []):
             attn_module = getattr(block, 'attn', None)
             if attn_module is not None:
-                handles.append(attn_module.register_forward_hook(attn_hook))
+                # Hook attn_drop inside the attention module
+                attn_drop = getattr(attn_module, 'attn_drop', None)
+                if attn_drop is not None:
+                    handles.append(attn_drop.register_forward_hook(attn_hook))
+                else:
+                    # Fallback: hook the attention module itself (older timm)
+                    handles.append(attn_module.register_forward_hook(
+                        lambda m, i, o: attn_maps.append(o[1].detach().cpu())
+                        if isinstance(o, tuple) and len(o) >= 2 and o[1] is not None else None
+                    ))
 
         try:
             with torch.no_grad():
@@ -308,9 +328,15 @@ def generate_dual_gradcam(
     H, W = image_tensor.shape[1], image_tensor.shape[2]
     img_rgb = _denorm(image_tensor)
 
+    # Check if seg image is informative; if flat → pass None so ConvNeXt
+    # GradCAM falls back to original image (avoids border artifacts).
+    seg_for_cam = image_seg_tensor
+    if seg_for_cam is not None and seg_for_cam.std().item() < 0.03:
+        seg_for_cam = None  # UNet produced flat mask — don't corrupt GradCAM
+
     # Generate maps
     eva_map_up,   eva_blend   = eva_cam.generate(image_tensor)
-    conv_map_up,  conv_blend  = convnext_cam.generate(image_tensor, target_class, image_seg_tensor)
+    conv_map_up,  conv_blend  = convnext_cam.generate(image_tensor, target_class, seg_for_cam)
 
     # Fuse: equal weight average (could be gated by actual gate values)
     eva_norm  = (eva_map_up  - eva_map_up.min())  / (eva_map_up.max()  - eva_map_up.min()  + 1e-8)
