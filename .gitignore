@@ -51,3 +51,10 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# ─── Local-only Documentation (private — do not publish) ──────────────────────
+RESEARCH_PAPER.md
+DermaFusion_AI_Research_Paper.pdf
+DermaFusion_Professional_Report.pdf
+Skin_Cancer_Model_Analysis_Report.md
+PROJECT_DOCUMENTATION.md
