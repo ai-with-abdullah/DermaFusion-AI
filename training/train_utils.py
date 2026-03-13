@@ -75,25 +75,26 @@ class ModelEMA:
         for name, param in model.named_parameters():
             if param.requires_grad:
                 self.backup[name] = param.data.clone()
-                param.data = self.shadow[name]
+                # Explicit device transfer: shadow lives on EMA_DEVICE (cpu by default)
+                param.data = self.shadow[name].to(param.device, non_blocking=True)
         for name, buf in model.named_buffers():
             if buf is not None:
                 key = f'__buf__{name}'
                 if key in self.shadow:
                     self.backup[key] = buf.data.clone()
-                    buf.data = self.shadow[key]
+                    buf.data = self.shadow[key].to(buf.device, non_blocking=True)
 
     def restore(self, model):
         """Restore original training weights and buffers after EMA validation."""
         model = self._unwrap(model)
         for name, param in model.named_parameters():
             if param.requires_grad and name in self.backup:
-                param.data = self.backup[name]
+                param.data = self.backup[name].to(param.device, non_blocking=True)
         for name, buf in model.named_buffers():
             if buf is not None:
                 key = f'__buf__{name}'
                 if key in self.backup:
-                    buf.data = self.backup[key]
+                    buf.data = self.backup[key].to(buf.device, non_blocking=True)
         self.backup = {}
 
 

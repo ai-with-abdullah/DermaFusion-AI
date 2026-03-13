@@ -48,8 +48,7 @@ class Sota2025Backbone(nn.Module):
         features = self.backbone(x)
         return features
 
-    def project_to_dim(self, features, dim):
-        if features.shape[1] != dim:
-            proj = nn.Linear(features.shape[1], dim).to(features.device)
-            return proj(features)
-        return features
+    # NOTE: Feature projection (backbone_dim → fusion_dim) is handled by
+    # DualBranchFusionClassifier.proj_eva using a trained nn.Linear.
+    # project_to_dim() has been removed — it created a new untrained Linear
+    # on every call and discarded it, which would apply a random projection.

@@ -354,13 +354,20 @@ def main():
             raw_model_pre_ddp = model  # not yet wrapped
             raw_model_pre_ddp.branch_eva.backbone.set_grad_checkpointing(enable=True)
             logger.info("Gradient checkpointing enabled on EVA-02 backbone")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                f"⚠  Gradient checkpointing FAILED on EVA-02: {e}\n"
+                "   Training continues WITHOUT checkpointing — GPU may OOM.\n"
+                "   Reduce BATCH_SIZE or GRADIENT_ACCUMULATION_STEPS if this happens."
+            )
         try:
             raw_model_pre_ddp.branch_conv.backbone.set_grad_checkpointing(enable=True)
             logger.info("Gradient checkpointing enabled on ConvNeXt V2 backbone")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                f"⚠  Gradient checkpointing FAILED on ConvNeXt: {e}\n"
+                "   Training continues WITHOUT checkpointing — GPU may OOM."
+            )
 
     # ── Multi-GPU: DataParallel only when per-GPU batch is ≥ 2 ──────────── #
     # DataParallel overhead > gain when each GPU sees only 1 image.

@@ -196,16 +196,16 @@ def _parse_ham10000(data_dir: str, masks_dir: Optional[str] = None) -> List[Skin
         return None
 
     if fmt == 'standard':
-        for _, row in df.iterrows():
-            label_str = str(row['dx']).lower().strip()
+        for row in df.itertuples(index=False):  # itertuples: 10-100x faster than iterrows
+            label_str = str(row.dx).lower().strip()
             if label_str not in cls_map:
                 continue
-            img_path = _find_image(str(row['image_id']))
+            img_path = _find_image(str(row.image_id))
             if img_path is None:
                 continue
             mask_path = None
             if masks_dir:
-                for suffix in [f"{row['image_id']}_segmentation.png", f"{row['image_id']}.png"]:
+                for suffix in [f"{row.image_id}_segmentation.png", f"{row.image_id}.png"]:
                     candidate = os.path.join(masks_dir, suffix)
                     if os.path.exists(candidate):
                         mask_path = candidate
@@ -213,22 +213,22 @@ def _parse_ham10000(data_dir: str, masks_dir: Optional[str] = None) -> List[Skin
             records.append(SkinLesionRecord(
                 image_path=img_path,
                 label_idx=cls_map[label_str],
-                patient_id=str(row.get('lesion_id', row['image_id'])),
+                patient_id=str(getattr(row, 'lesion_id', row.image_id)),
                 dataset_name='HAM10000',
                 mask_path=mask_path,
             ))
 
     elif fmt == 'onehot':
         label_cols = [c for c in ONE_HOT_MAP if c in df.columns]
-        for _, row in df.iterrows():
+        for row in df.itertuples(index=False):  # itertuples: 10-100x faster than iterrows
             label_str = None
             for col in label_cols:
-                if row.get(col, 0) == 1.0:
+                if getattr(row, col, 0) == 1.0:
                     label_str = ONE_HOT_MAP[col]
                     break
             if label_str is None or label_str not in cls_map:
                 continue
-            img_id   = str(row['image'])
+            img_id   = str(row.image)
             img_path = _find_image(img_id)
             if img_path is None:
                 continue
@@ -309,18 +309,18 @@ def _parse_isic2019(data_dir: str) -> List[SkinLesionRecord]:
                     return p
         return None
 
-    for _, row in df.iterrows():
+    for row in df.itertuples(index=False):  # itertuples: 10-100x faster than iterrows
         label_col = None
         label_str = None
         for col in label_cols:
-            if row.get(col, 0) == 1.0:
+            if getattr(row, col, 0) == 1.0:
                 label_col = col
                 label_str = REMAP.get(col)
                 break
         if label_str is None or label_str not in cls_map:
             continue
 
-        img_path = _find_img(str(row['image']), label_col or '')
+        img_path = _find_img(str(row.image), label_col or '')
         if img_path is None:
             missing_count += 1
             continue
@@ -328,7 +328,7 @@ def _parse_isic2019(data_dir: str) -> List[SkinLesionRecord]:
         records.append(SkinLesionRecord(
             image_path=img_path,
             label_idx=cls_map[label_str],
-            patient_id=str(row['image']),
+            patient_id=str(row.image),
             dataset_name='ISIC2019',
         ))
 
@@ -377,14 +377,14 @@ def _parse_isic2020(data_dir: str) -> List[SkinLesionRecord]:
     if 'target' not in df.columns or 'image_name' not in df.columns:
         return records
 
-    for _, row in df.iterrows():
-        if int(row['target']) != 1:
+    for row in df.itertuples(index=False):  # itertuples: 10-100x faster than iterrows
+        if int(row.target) != 1:
             continue  # Skip target=0 — heterogeneous negatives (label noise)
         label_str = 'mel'
 
         img_path = None
         for ext in ['.jpg', '.png', '.jpeg']:
-            candidate = os.path.join(img_dir, f"{row['image_name']}{ext}")
+            candidate = os.path.join(img_dir, f"{row.image_name}{ext}")
             if os.path.exists(candidate):
                 img_path = candidate
                 break
@@ -394,7 +394,7 @@ def _parse_isic2020(data_dir: str) -> List[SkinLesionRecord]:
         records.append(SkinLesionRecord(
             image_path=img_path,
             label_idx=cls_map[label_str],
-            patient_id=str(row.get('patient_id', row['image_name'])),
+            patient_id=str(getattr(row, 'patient_id', row.image_name)),
             dataset_name='ISIC2020',
         ))
 
@@ -439,11 +439,11 @@ def _parse_isic2024(data_dir: str) -> List[SkinLesionRecord]:
     # Use real patient_id if available (prevents same patient in train+test)
     has_patient_col = 'patient_id' in df.columns
 
-    for _, row in df.iterrows():
-        label_str = 'mel' if int(row['target']) == 1 else 'nv'
-        img_path = os.path.join(img_dir, f"{row[id_col]}.jpg")
+    for row in df.itertuples(index=False):  # itertuples: 10-100x faster than iterrows (401K rows!)
+        label_str = 'mel' if int(row.target) == 1 else 'nv'
+        img_path = os.path.join(img_dir, f"{getattr(row, id_col)}.jpg")
 
-        pid = str(row['patient_id']) if has_patient_col else str(row[id_col])
+        pid = str(row.patient_id) if has_patient_col else str(getattr(row, id_col))
         records.append(SkinLesionRecord(
             image_path=img_path,
             label_idx=cls_map[label_str],
@@ -498,9 +498,9 @@ def _parse_ph2(data_dir: str) -> List[SkinLesionRecord]:
         if name_col is None:
             return records
 
-        for _, row in df.iterrows():
-            img_name = str(row[name_col]).strip()
-            diag     = int(row[diag_col])
+        for row in df.itertuples(index=False):  # itertuples: faster than iterrows
+            img_name = str(getattr(row, name_col)).strip()
+            diag     = int(getattr(row, diag_col))
             label_str = PH2_REMAP.get(diag)
             if label_str is None or label_str not in cls_map:
                 continue
@@ -623,7 +623,16 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
     all_records += _parse_ph2(data_dir)
 
     if len(all_records) == 0:
-        print("  [UnifiedDataset] No records found — generating dummy data.")
+        import time
+        print("\n" + "!" * 70)
+        print("  ⚠️  WARNING: No real datasets found in DATA_DIR:")
+        print(f"     {data_dir}")
+        print("  ⚠️  Falling back to 120 DUMMY black images.")
+        print("  ⚠️  If this is NOT intentional, check your DATA_DIR path.")
+        print("  ⚠️  Training on dummy data will produce a USELESS model.")
+        print("  Continuing in 3 seconds — press Ctrl+C to abort.")
+        print("!" * 70 + "\n")
+        time.sleep(3)
         all_records = _make_dummy_records(data_dir)
 
     # Report

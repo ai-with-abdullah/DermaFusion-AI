@@ -54,7 +54,11 @@ Thumbs.db
 
 # ─── Local-only Documentation (private — do not publish) ──────────────────────
 RESEARCH_PAPER.md
-DermaFusion_AI_Research_Paper.pdf
-DermaFusion_Professional_Report.pdf
-Skin_Cancer_Model_Analysis_Report.md
-PROJECT_DOCUMENTATION.md
+FUTURE_IMPROVEMENTS.md
+*.pdf
+*.docx
+*.doc
+
+# ─── Test outputs & DERM7PT raw images (too large / private) ─────────────────
+outputs/padufes_results/
+release_v0/images/.DS_Store

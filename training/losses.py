@@ -179,25 +179,20 @@ class AsymmetricMelFocalLoss(nn.Module):
     Asymmetric focal loss that penalizes melanoma (mel) False Negatives
     more heavily than False Positives.
 
-    Clinical motivation: missing a melanoma (FN) costs lives; a false alarm (FP)
-    results in an unnecessary biopsy. This asymmetry should be baked into training.
+    ⚠️  NOT USED IN TRAINING — kept for reference only.
+    ─────────────────────────────────────────────────────
+    This class is intentionally excluded from get_combined_class_loss().
+    Reason: The per-sample loss path was abandoned (forward() called the
+    mean-reduced version of base_loss, making the asymmetric weighting
+    apply to an already-reduced scalar rather than individual samples).
 
-    Strategy:
-      For samples where the TRUE class is mel:
-        - If model is confident AND correct  → down-weight (easy positive, focal)
-        - If model is wrong (FN)            → HEAVY penalty (fn_weight × normal loss)
-      For samples where PREDICTED class is mel but TRUE is not (FP):
-        - Normal focal weight
+    Current strategy for mel clinical priority (already in CombinedClassLoss):
+      - class_weights[mel] × 2   (in get_class_weights_from_records)
+      - gamma = 2.0              (standard Focal Loss)
+      - label_smoothing = 0.1   (multi-dataset noise robustness)
 
-    Research context:
-      MedGemma study (2025) achieved 93% mel recall using asymmetric focal weighting
-      on the same 7-class HAM10000 imbalanced setup.
-
-    Args:
-        mel_idx:    Class index of melanoma (4 for HAM7 scheme)
-        fn_weight:  Extra penalty multiplier for mel false negatives (default 3.0)
-        gamma:      Focal modulating exponent
-        base_loss:  Underlying combined loss to wrap
+    If you want to re-enable asymmetric mel weighting, rewrite forward()
+    to use reduction='none' throughout, then weight and reduce manually.
     """
 
     def __init__(
@@ -212,39 +207,12 @@ class AsymmetricMelFocalLoss(nn.Module):
         self.fn_weight = fn_weight
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        # Base combined loss (per-sample, no reduction)
-        base = self.base_loss.focal.forward.__func__(
-            self.base_loss.focal,
-            inputs,
-            targets
-        )  # This may return mean-reduced; we need per-sample
-
-        # Simpler approach: compute base loss mean first, then apply asymmetric scale
-        base_loss_val = self.base_loss(inputs, targets)  # scalar
-
-        # Find mel FN samples: true label is mel AND predicted is NOT mel
-        with torch.no_grad():
-            probs = torch.softmax(inputs, dim=1)
-            predicted = probs.argmax(dim=1)
-            is_true_mel   = (targets == self.mel_idx)              # (B,) bool
-            is_pred_wrong = (predicted != targets)                 # (B,) bool
-            mel_fn_mask   = is_true_mel & is_pred_wrong            # mel false negatives
-
-        if mel_fn_mask.any():
-            # Re-compute loss only on mel FN samples with fn_weight multiplier
-            mel_fn_loss = (
-                self.base_loss(inputs[mel_fn_mask], targets[mel_fn_mask])
-                * self.fn_weight
-            )
-            # Mix: average of base loss and weighted mel-FN loss
-            fn_count = mel_fn_mask.sum().float()
-            total    = torch.tensor(inputs.size(0), dtype=torch.float, device=inputs.device)
-            # Weighted blend proportional to FN count
-            loss = base_loss_val + (fn_count / total) * mel_fn_loss
-        else:
-            loss = base_loss_val
-
-        return loss
+        raise NotImplementedError(
+            "AsymmetricMelFocalLoss.forward() is not correctly implemented — "
+            "the per-sample loss path was abandoned (base_loss returns a scalar). "
+            "Use get_combined_class_loss() directly, which already applies a 2× "
+            "melanoma class weight via get_class_weights_from_records()."
+        )
 
 
 # =========================================================================== #

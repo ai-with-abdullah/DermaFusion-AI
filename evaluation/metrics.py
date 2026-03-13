@@ -178,24 +178,21 @@ def compute_pauc(
     min_tpr: float = 0.80,
 ) -> float:
     """
-    Computes the partial AUC (pAUC) above a minimum TPR (True Positive Rate) threshold.
+    Computes the partial AUC (pAUC) above a minimum TPR threshold.
 
-    ISIC 2024 challenge uses pAUC at ≥80% TPR as the primary metric because
-    high sensitivity is mandatory for clinical melanoma screening.
-
-    FIXED (Upgrade #2): Docstring previously said '80% specificity' which is the
-    OPPOSITE of what the code computes. The code correctly filters tpr >= min_tpr
-    (i.e., sensitivity ≥80%), which matches the ISIC 2024 official metric definition.
+    ⚠️  INTERNAL METRIC ONLY — NOT comparable to ISIC 2024 leaderboard.
+    ───────────────────────────────────────────────────
+    The ISIC 2024 official pAUC uses a different normalization and the
+    official competition evaluation script. Values logged here (especially
+    near 1.0) should NOT be reported as ISIC leaderboard scores.
+    A value of 1.0 typically means the model achieves perfect mel ranking
+    on the (small) test split, which saturates this simplified metric.
 
     For multi-class: computes binary mel-vs-rest pAUC.
-
-    Normalization:
-      Max possible AUC above min_tpr=0.80 is 1.0 × (1 - 0.80) = 0.20.
-      We normalize by 0.20 to get a score in [0, 1] comparable to the
-      ISIC 2024 official leaderboard.
+    Reports area under the ROC curve where TPR ≥ min_tpr, normalized.
 
     Returns:
-        pAUC score in [0, 1] (higher = better, ISIC-compatible)
+        pAUC score in [0, 1] for internal tracking only.
     """
     # Mel class index (hardcoded 4 for HAM7 scheme: akiec/bcc/bkl/df/mel/nv/vasc)
     mel_idx = config.CLASSES.index('mel') if 'mel' in config.CLASSES else 0
@@ -216,13 +213,24 @@ def compute_pauc(
 
         partial_auc = np.trapz(tpr[mask], fpr[mask])
 
-        # ISIC standard: normalize by max possible area above min_tpr
-        # Max area = 1.0 (full FPR range) × (1 - min_tpr)
+        # Normalize by max possible area above min_tpr
         max_area = 1.0 - min_tpr  # = 0.20 for min_tpr=0.80
         if max_area < 1e-8:
             return 0.0
 
-        return float(np.clip(partial_auc / max_area, 0.0, 1.0))
+        result = float(np.clip(partial_auc / max_area, 0.0, 1.0))
+
+        # Warn when result is suspiciously perfect — likely metric saturation
+        # on a small test set, NOT a true perfect score.
+        if result >= 1.0:
+            import warnings
+            warnings.warn(
+                "compute_pauc() returned 1.0 — this likely indicates metric saturation "
+                "on a small test split, not a genuinely perfect score. "
+                "Do NOT report this as ISIC 2024 pAUC = 1.0 in any paper.",
+                UserWarning, stacklevel=2,
+            )
+        return result
     except Exception:
         return 0.0
 
