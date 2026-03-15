@@ -1,0 +1,6 @@
+Model,Device,Batch,mean_ms,std_ms,median_ms,min_ms,max_ms,p95_ms,throughput_imgs_per_sec
+Swin-UNet Segmentation,cpu,1,772.43,159.91,707.75,593.98,1090.07,1073.56,
+DermaFusion-AI Classifier,cpu,1,3684.45,291.23,3634.01,3333.6,4458.23,4183.51,
+DermaFusion (batch=1),cpu,1,,,,,,,0.2
+DermaFusion (batch=4),cpu,4,,,,,,,0.2
+DermaFusion (batch=8),cpu,8,,,,,,,0.2

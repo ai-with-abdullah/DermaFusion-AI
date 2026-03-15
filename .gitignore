@@ -10,6 +10,9 @@ dist/
 build/
 *.spec
 
+# ─── Gradio temp ──────────────────────────────────────────────────────────────
+.gradio/
+
 # ─── Environments ─────────────────────────────────────────────────────────────
 .env
 .venv
@@ -43,7 +46,12 @@ data/
 outputs/logs/
 outputs/plots/
 outputs/explainability_heatmaps/
+outputs/**/.DS_Store
+outputs/.DS_Store
 *.log
+
+# ─── Large binary prediction files (regenerate from Kaggle) ──────────────────
+outputs/*.npz
 
 # ─── OS/IDE Artifacts ─────────────────────────────────────────────────────────
 .DS_Store
@@ -55,6 +63,7 @@ Thumbs.db
 # ─── Local-only Documentation (private — do not publish) ──────────────────────
 RESEARCH_PAPER.md
 FUTURE_IMPROVEMENTS.md
+PUBLISHING_AND_SCHOLARSHIPS.md
 *.pdf
 *.docx
 *.doc
