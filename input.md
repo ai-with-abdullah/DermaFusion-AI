@@ -418,16 +418,27 @@ Temperature scaling (T=1.460) reduced ECE from 0.0661 to 0.0390 — a 41% reduct
 
 | Component | Parameters | GFLOPs |
 |---|---|---|
-| Branch A — EVA-02 Large | 304.1M | ~296.8 |
-| Branch B — ConvNeXt V2 Base | 88.5M | ~59.1 |
+| Branch A — EVA-02 Large | 304.1M | 296.8 |
+| Branch B — ConvNeXt V2 Base | 88.5M | 59.1 |
 | Fusion + Classifier Head | 9.0M | — |
 | **Total Classifier** | **401.6M** | **355.9** |
 | Swin-UNet Segmentation | 95.5M | 59.1 |
 | **End-to-End Total** | **497.1M** | **415.0** |
 
-> *Table 5d. Model complexity. FLOPs measured via fvcore at 448×448 input resolution. GPU inference benchmarks were conducted on NVIDIA T4 (16GB).*
+> *Table 5d. Model complexity. FLOPs measured via fvcore at 448×448 input resolution.*
 
-The 355.9 GFLOPs inference cost reflects the large-resolution (448×448) dual-branch design. While computationally expensive for real-time deployment, the cost is acceptable for clinical-decision-support scenarios where inference is triggered on-demand per lesion image (not video/stream). Future compression via knowledge distillation is planned (Section 8.3).
+| Configuration | GPU Latency | CPU Latency |
+|---|---|---|
+| Swin-UNet segmentation | 44.7 ± 1.3 ms | ~793 ms |
+| DermaFusion-AI classifier | 326.7 ± 5.7 ms | ~4,722 ms |
+| **Total end-to-end** | **371.4 ms/image** | **~5,515 ms/image** |
+| Batch throughput (batch=8) | **3.3 images/sec** | — |
+
+> *Table 5e. Inference latency benchmarks on NVIDIA Tesla T4 (16GB, GPU T4×2, Kaggle) and Apple M-series CPU. GPU latency reported as mean ± std over 100 runs with 10 warm-up iterations. Batch=8 throughput: 3.3 img/sec.*
+
+At 371 ms/image on a Tesla T4, the model processes approximately 3.3 dermoscopy images per second — suitable for clinical workflows where images are analysed on demand rather than at video framerates. The 497M total parameters and 415 GFLOPs per image reflect the design priority of accuracy over computational efficiency; future compression via knowledge distillation is planned (Section 8.3).
+
+
 
 
 
