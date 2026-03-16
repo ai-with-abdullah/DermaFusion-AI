@@ -1,0 +1,56 @@
+2026-03-15 14:59:06,399 INFO =================================================================
+2026-03-15 14:59:06,400 INFO   DermaFusion-AI — McNemar's Statistical Significance Test
+2026-03-15 14:59:06,400 INFO =================================================================
+2026-03-15 14:59:06,400 ERROR DermaFusion-AI predictions not found at /Users/macintosh/Desktop/Computer Vision Project/outputs/test_predictions.npz.
+  → Run evaluation/run_confidence_intervals.py first to generate and cache predictions.
+  → OR manually save predictions: np.savez(cache_a, y_true=..., y_pred_probs=...)
+2026-03-15 19:53:22,260 INFO =================================================================
+2026-03-15 19:53:22,261 INFO   DermaFusion-AI — McNemar's Statistical Significance Test
+2026-03-15 19:53:22,261 INFO =================================================================
+2026-03-15 19:53:22,262 WARNING Baseline predictions not found at /Users/macintosh/Desktop/Computer Vision Project/outputs/test_predictions_baseline.npz.
+  → To generate: save your EVA-02 Small predictions as test_predictions_baseline.npz
+  → Format: np.savez(path, y_true=y_true_array, y_pred_probs=probs_array)
+  → Running demo mode with simulated baseline for illustration...
+2026-03-15 19:53:22,265 INFO   [DEMO] Using simulated baseline (15% random errors injected).
+2026-03-15 19:53:22,265 INFO   [DEMO] Replace with real EVA-02 Small predictions for paper-quality results.
+2026-03-15 19:53:22,265 INFO 
+Running overall McNemar's test (DermaFusion-AI vs Baseline)...
+2026-03-15 19:53:22,267 INFO 
+=================================================================
+2026-03-15 19:53:22,267 INFO   OVERALL McNEMAR'S TEST RESULT
+2026-03-15 19:53:22,267 INFO =================================================================
+2026-03-15 19:53:22,267 INFO   N samples         : 1013
+2026-03-15 19:53:22,267 INFO   Model A accuracy  : 0.9161  (DermaFusion-AI)
+2026-03-15 19:53:22,267 INFO   Model B accuracy  : 0.7868  (Baseline (EVA-02 Small))
+2026-03-15 19:53:22,267 INFO   Discordant pairs  : n01=133, n10=2
+2026-03-15 19:53:22,268 INFO   Chi-squared       : 125.1852
+2026-03-15 19:53:22,268 INFO   Significance      : p < 0.001 *** (highly significant)
+2026-03-15 19:53:22,268 INFO   Cohen's g         : 0.4852
+2026-03-15 19:53:22,268 INFO   Conclusion        : DermaFusion-AI is significantly better than Baseline (EVA-02 Small)
+2026-03-15 19:53:22,268 INFO 
+Running per-class McNemar's tests...
+2026-03-15 19:53:22,272 INFO 
+=================================================================
+2026-03-15 19:53:22,272 INFO   PER-CLASS McNEMAR'S TEST (sensitivity comparison)
+2026-03-15 19:53:22,272 INFO =================================================================
+2026-03-15 19:53:22,273 INFO   Class          n     chi2    p-value   A_sens   B_sens   Sig
+2026-03-15 19:53:22,273 INFO   akiec         40    1.333     0.2482    0.925    0.850     ✗
+2026-03-15 19:53:22,273 INFO   bcc           52    8.100     0.0044    0.942    0.750     ✓
+2026-03-15 19:53:22,274 INFO   bkl           96    9.091     0.0026    0.979    0.865     ✓
+2026-03-15 19:53:22,274 INFO   df            14    1.333     0.2482    1.000    0.786     ✗
+2026-03-15 19:53:22,274 INFO   mel          116   10.562     0.0012    0.940    0.819     ✓
+2026-03-15 19:53:22,274 INFO   nv           688   83.101     0.0000    0.898    0.772     ✓
+2026-03-15 19:53:22,275 INFO   vasc           7    1.333     0.2482    1.000    0.571     ✗
+2026-03-15 19:53:22,282 INFO 
+=================================================================
+2026-03-15 19:53:22,283 INFO   PAPER-READY TEXT SNIPPET
+2026-03-15 19:53:22,283 INFO =================================================================
+2026-03-15 19:53:22,283 INFO   'We compared DermaFusion-AI against the EVA-02 Small baseline using McNemar's test on the same 1013-sample test set (χ²=125.19, df=1, p < 0.001). DermaFusion-AI is significantly better than Baseline (EVA-02 Small).'
+2026-03-15 19:53:22,287 INFO 
+  Per-class results saved to /Users/macintosh/Desktop/Computer Vision Project/outputs/statistical_tests.csv
+2026-03-15 20:09:58,621 INFO =================================================================
+2026-03-15 20:09:58,622 INFO   DermaFusion-AI — McNemar's Statistical Significance Test
+2026-03-15 20:09:58,622 INFO =================================================================
+2026-03-15 20:09:58,622 ERROR DermaFusion-AI predictions not found at /Users/macintosh/Desktop/Computer Vision Project/outputs/test_predictions.npz.
+  → Run evaluation/run_confidence_intervals.py first to generate and cache predictions.
+  → OR manually save predictions: np.savez(cache_a, y_true=..., y_pred_probs=...)

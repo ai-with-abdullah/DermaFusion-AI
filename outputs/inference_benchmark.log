@@ -1,0 +1,32 @@
+2026-03-15 19:53:50,158 INFO =================================================================
+2026-03-15 19:53:50,158 INFO   DermaFusion-AI — Inference Time & Parameter Benchmark
+2026-03-15 19:53:50,158 INFO =================================================================
+2026-03-15 19:53:50,158 INFO   Device: cpu
+2026-03-15 19:54:06,519 INFO 
+[1] Parameter Counts
+2026-03-15 19:54:06,529 INFO   Component                             Params (M)
+2026-03-15 19:54:06,529 INFO   ------------------------------------------------
+2026-03-15 19:54:06,529 INFO   Branch A (EVA-02 Large)                   304.06M
+2026-03-15 19:54:06,529 INFO   Branch B (ConvNeXt V2)                     88.48M
+2026-03-15 19:54:06,529 INFO   Classifier Head                             0.13M
+2026-03-15 19:54:06,529 INFO   Segmentation (Swin-UNet)                   95.48M
+2026-03-15 19:54:06,529 INFO   TOTAL (classifier)                        401.60M
+2026-03-15 19:54:06,530 INFO   TOTAL (including UNet)                    497.08M
+2026-03-15 19:54:06,530 INFO 
+[2] FLOPs Estimation
+2026-03-15 19:54:15,964 INFO   Classifier (EVA-02 + ConvNeXt + Fusion): 355.9 GFLOPs (fvcore)
+2026-03-15 19:54:15,965 INFO   Segmentation UNet:                       59.1 GFLOPs (fvcore)
+2026-03-15 19:54:15,965 INFO 
+[3] Latency Benchmarks
+2026-03-15 19:54:15,965 INFO   Benchmarking UNet segmentation (GPU, 1 image)...
+2026-03-15 19:54:57,721 INFO     UNet: 772.4 ± 159.9 ms
+2026-03-15 19:54:57,721 INFO   Benchmarking DermaFusion classifier (GPU, 1 image)...
+2026-03-15 19:58:24,129 INFO     Classifier: 3684.4 ± 291.2 ms
+2026-03-15 19:58:24,129 INFO     Total E2E (UNet + Classifier): 4456.9 ms/image (GPU)
+2026-03-15 19:58:24,129 INFO 
+[4] Batch Throughput
+2026-03-15 20:00:07,880 INFO     Batch  1: 0.2 images/sec
+2026-03-15 20:07:09,659 INFO     Batch  4: 0.2 images/sec
+2026-03-15 20:20:26,923 INFO     Batch  8: 0.2 images/sec
+2026-03-15 20:20:26,929 INFO 
+  Results saved to /Users/macintosh/Desktop/Computer Vision Project/outputs/inference_benchmark.csv

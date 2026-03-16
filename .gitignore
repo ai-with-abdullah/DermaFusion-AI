@@ -8,7 +8,6 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-*.spec
 
 # ─── Environments ─────────────────────────────────────────────────────────────
 .env
@@ -18,41 +17,37 @@ env/
 
 # ─── Jupyter / IPython ────────────────────────────────────────────────────────
 .ipynb_checkpoints/
-# NOTE: *.ipynb is tracked intentionally (train_on_kaggle.ipynb, train_on_colab.ipynb)
+# NOTE: *.ipynb tracked intentionally (train_on_kaggle.ipynb, train_on_colab.ipynb)
 
 # ─── Model Weights & Checkpoints (too large for GitHub; use Kaggle / GDrive) ─
-outputs/weights/*.pth
-outputs/weights/*.pt
-outputs/weights/*.ckpt
-outputs/plots/
-outputs/attention_maps/
-outputs/explainability_heatmaps/
-outputs/segmentation_masks/
-outputs/test_explainability/
+outputs/weights/
 *.pth
 *.pt
 *.ckpt
 
-# ─── Dataset Folders (never commit raw images) ────────────────────────────────
+# ─── Large binary outputs ─────────────────────────────────────────────────────
+*.npz
+outputs/plots/
+outputs/attention_maps/
+outputs/explainability_heatmaps/
+outputs/segmentation_masks/
+outputs/padufes_results/
+outputs/logs/
+
+# ─── Dataset folders (never commit raw images) ────────────────────────────────
 data/
 *.h5
 *.hdf5
-*.tfrecord
 
-# ─── Training Logs & Plots (optional, can re-generate) ────────────────────────
-outputs/logs/
-outputs/plots/
-outputs/explainability_heatmaps/
-*.log
-
-# ─── OS/IDE Artifacts ─────────────────────────────────────────────────────────
+# ─── OS / IDE artifacts ────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
 *.swp
+.gradio/
 
-# ─── Local-only Documentation (private — do not publish) ──────────────────────
+# ─── Local-only / private docs (do not publish) ───────────────────────────────
 RESEARCH_PAPER.md
 FUTURE_IMPROVEMENTS.md
 PUBLISHING_AND_SCHOLARSHIPS.md
@@ -60,6 +55,6 @@ PUBLISHING_AND_SCHOLARSHIPS.md
 *.docx
 *.doc
 
-# ─── Test outputs & DERM7PT raw images (too large / private) ─────────────────
-outputs/padufes_results/
-release_v0/images/.DS_Store
+# ─── Misc ─────────────────────────────────────────────────────────────────────
+release_v0/
+cv_results/
