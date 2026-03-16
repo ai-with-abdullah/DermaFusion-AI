@@ -249,7 +249,11 @@ def evaluate(model, loader):
     y_preds = np.array(all_preds)
 
     try:
-        auc = roc_auc_score(y_true, y_probs, multi_class='ovr', average='macro')
+        auc = roc_auc_score(
+            y_true, y_probs,
+            multi_class='ovr', average='macro',
+            labels=list(range(cfg.NUM_CLASSES))  # explicit — prevents NaN on missing classes
+        )
     except Exception:
         auc = float('nan')
 
@@ -360,12 +364,15 @@ def train_fold(fold_idx: int, train_df: pd.DataFrame, val_df: pd.DataFrame) -> d
         pd.DataFrame(epoch_history).to_csv(
             os.path.join(fold_dir, "epoch_history.csv"), index=False)
 
-        # Save best model
-        if val_auc > best_auc:
-            best_auc = val_auc
+        # Save best model — use AUC if valid, else fall back to balanced accuracy
+        import math
+        track_metric = val_auc if not math.isnan(val_auc) else val_metrics['bal_acc']
+        metric_name  = 'AUC' if not math.isnan(val_auc) else 'BalAcc'
+        if track_metric > best_auc:
+            best_auc = track_metric
             patience_counter = 0
             torch.save(model.state_dict(), best_model_path)
-            log.info(f"  ✅ New best AUC={best_auc:.4f} — model saved")
+            log.info(f"  ✅ New best {metric_name}={best_auc:.4f} — model saved")
         else:
             patience_counter += 1
             if patience_counter >= cfg.PATIENCE:
