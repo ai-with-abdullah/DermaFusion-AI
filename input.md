@@ -259,6 +259,13 @@ $$\text{BalAcc} = \frac{1}{C} \sum_{c=1}^{C} \frac{TP_c}{TP_c + FN_c} = \frac{1}
 
 Balanced accuracy is the mean of per-class recall (sensitivity), making it robust to class imbalance. It is the primary metric used for model selection in this work.
 
+**Melanoma Sensitivity (MEL Sensitivity):**
+$$\text{MEL Sensitivity} = \text{Recall}_{\text{mel}} = \frac{TP_{\text{mel}}}{TP_{\text{mel}} + FN_{\text{mel}}}$$
+
+where $TP_{\text{mel}}$ is the number of melanoma cases correctly predicted as melanoma and $FN_{\text{mel}}$ is the number of melanoma cases incorrectly classified as benign. MEL Sensitivity is the single most clinically critical metric in skin cancer AI — a missed melanoma (false negative) is significantly more dangerous than a false alarm. Our model targets MEL Sensitivity ≥ 90%, corresponding to the performance threshold for clinical decision support [ref].
+
+
+
 **Expected Calibration Error (ECE):**
 $$\text{ECE} = \sum_{m=1}^{M} \frac{|B_m|}{n} \left| \text{acc}(B_m) - \text{conf}(B_m) \right|$$
 
