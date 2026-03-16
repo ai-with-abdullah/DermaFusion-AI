@@ -231,23 +231,8 @@ def main():
 
     model_path = os.path.join(config.WEIGHTS_DIR, "best_dual_branch_fusion.pth")
     if os.path.exists(model_path):
-        try:
-            model.load_state_dict(
-                torch.load(model_path, map_location=device, weights_only=True),
-                strict=True,
-            )
-            logger.info(f"Loaded classifier weights from {model_path}")
-        except RuntimeError as e:
-            logger.warning(
-                f"Weight loading failed (strict=True): {str(e)[:120]}...\n"
-                "  → Falling back to RANDOM weights.\n"
-                "  → ⚠ This is fine for latency/FLOPs benchmarks — timing depends on\n"
-                "  →   architecture, not weight values. Results are still paper-valid.\n"
-                "  → To fix: ensure best_dual_branch_fusion.pth is EVA-02 LARGE (dim=1024),\n"
-                "  →   not the old EVA-02 Small (dim=384) checkpoint."
-            )
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
-
 
     # ── Dummy inputs ─────────────────────────────────────────────────────── #
     img_eva  = torch.randn(1, 3, 448, 448)   # EVA-02 input
