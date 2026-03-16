@@ -31,9 +31,11 @@ from torchvision.transforms import RandAugment
 from sklearn.model_selection import GroupKFold
 from sklearn.metrics import roc_auc_score, balanced_accuracy_score, f1_score
 from PIL import Image
+from tqdm import tqdm
 import timm
 import warnings
 warnings.filterwarnings("ignore")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CONFIG
@@ -206,7 +208,9 @@ def train_one_epoch(model, loader, optimizer, scheduler, scaler, epoch):
     model.train()
     criterion = nn.CrossEntropyLoss(label_smoothing=cfg.LABEL_SMOOTH).to(DEVICE)
     total_loss, correct, total = 0.0, 0, 0
-    for imgs, labels in loader:
+    pbar = tqdm(loader, desc=f"  Ep{epoch+1:02d} train", leave=False,
+                ncols=90, unit="batch")
+    for imgs, labels in pbar:
         imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
         optimizer.zero_grad()
         with autocast('cuda', enabled=cfg.MIXED_PREC):
@@ -221,6 +225,7 @@ def train_one_epoch(model, loader, optimizer, scheduler, scaler, epoch):
         preds = logits.argmax(1)
         correct += (preds == labels).sum().item()
         total   += imgs.size(0)
+        pbar.set_postfix(loss=f"{total_loss/total:.4f}", acc=f"{correct/total:.3f}")
     scheduler.step()
     return total_loss / total, correct / total
 
@@ -229,7 +234,7 @@ def train_one_epoch(model, loader, optimizer, scheduler, scaler, epoch):
 def evaluate(model, loader):
     model.eval()
     all_probs, all_preds, all_labels = [], [], []
-    for imgs, labels in loader:
+    for imgs, labels in tqdm(loader, desc="  Eval", leave=False, ncols=90, unit="batch"):
         imgs = imgs.to(DEVICE)
         with autocast('cuda', enabled=cfg.MIXED_PREC):
             logits = model(imgs)
