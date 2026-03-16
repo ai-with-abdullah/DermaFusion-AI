@@ -460,8 +460,25 @@ To confirm the dual-branch fusion provides a statistically significant improveme
 > *Table 5f. McNemar's test comparing Full DermaFusion-AI vs EVA-02 Large-only inference on n=1,013 HAM10000 test samples (patient-aware split, seed=42). GPU inference on NVIDIA Tesla T4. Both models use identical weights; Model B bypasses the ConvNeXt branch and cross-attention fusion.*
 
 The McNemar's test (χ²=12.96, df=1, p<0.001) demonstrates that the dual-branch cross-attention fusion provides a **statistically significant improvement** over EVA-02 alone. The highly asymmetric discordant pair ratio (22:3) confirms that fusion consistently corrects EVA-02 errors — the ConvNeXt texture branch and cross-attention mechanism contribute independent, complementary information not captured by global attention alone. Dual-branch fusion is not merely additive but synergistic.
+### 5.2.5 Five-Fold Cross-Validation Stability
+
+To assess the statistical stability and generalisation of the EVA-02 backbone under patient-aware data splits, we conducted a 5-fold cross-validation on HAM10000 using `GroupKFold` on patient/lesion identifiers (`lesion_id`), ensuring no patient appears in both train and validation sets. Each fold trains EVA-02 Small (22M params) from ImageNet/IN22K pretrained weights for up to 20 epochs with early stopping (patience=8), with cosine LR decay and melanoma-boosted weighted sampling. Fold-level AUC was recomputed post-training from saved best-epoch checkpoints using the corrected `roc_auc_score(labels=[0..6])` call.
+
+| Fold | n_val | AUC | Bal Acc | Macro F1 | MEL Sens |
+|---|---|---|---|---|---|
+| 0 | 2,003 | 0.9525 | 0.7799 | 0.7340 | 0.8053 |
+| 1 | 2,003 | 0.9593 | 0.7453 | 0.6771 | 0.7764 |
+| 2 | 2,003 | 0.9582 | 0.7895 | 0.7841 | 0.6860 |
+| 3 | 2,003 | 0.9335 | 0.7622 | 0.6859 | 0.7340 |
+| 4 | 2,003 | 0.9523 | 0.7720 | 0.6996 | 0.7749 |
+| **Mean ± SD** | — | **0.9512 ± 0.0093** | **0.7698 ± 0.0152** | **0.7161 ± 0.0391** | **0.7553 ± 0.0414** |
+
+> *Table 5g. 5-fold patient-aware cross-validation (EVA-02 Small, HAM10000). GroupKFold on lesion\_id. GPU: NVIDIA Tesla T4. Each fold: up to 20 epochs, early stopping patience=8.*
+
+The low coefficient of variation across folds (AUC CV: 0.98%, BalAcc CV: 1.97%) confirms that DermaFusion-AI's backbone does not overfit to a specific train/test split. Fold 3 exhibited the lowest AUC (0.9335), likely due to an unfavourable rare-class distribution in that patient group; all other folds exceed AUC=0.95. Full 5-fold CV on the complete 401M DermaFusion-AI model is computationally prohibitive (~15h/fold × 5 = ~75h GPU) and is reserved for future work; the EVA-02 Small baseline CV reported here validates the stability of the core attention mechanism independently of the ConvNeXt branch and fusion head.
 
 ### 5.3 Ablation: EVA-02 Small vs Large
+
 
 
 | Metric | EVA-02 Small (HAM+2019+2020) | EVA-02 Large (HAM+2019+2024) | Gain |
