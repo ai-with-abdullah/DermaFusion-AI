@@ -262,7 +262,7 @@ Balanced accuracy is the mean of per-class recall (sensitivity), making it robus
 **Melanoma Sensitivity (MEL Sensitivity):**
 $$\text{MEL Sensitivity} = \text{Recall}_{\text{mel}} = \frac{TP_{\text{mel}}}{TP_{\text{mel}} + FN_{\text{mel}}}$$
 
-where $TP_{\text{mel}}$ is the number of melanoma cases correctly predicted as melanoma and $FN_{\text{mel}}$ is the number of melanoma cases incorrectly classified as benign. MEL Sensitivity is the single most clinically critical metric in skin cancer AI — a missed melanoma (false negative) is significantly more dangerous than a false alarm. Our model targets MEL Sensitivity ≥ 90%, corresponding to the performance threshold for clinical decision support [ref].
+where $TP_{\text{mel}}$ is the number of melanoma cases correctly predicted as melanoma and $FN_{\text{mel}}$ is the number of melanoma cases incorrectly classified as benign. MEL Sensitivity is the single most clinically critical metric in skin cancer AI — a missed melanoma (false negative) is significantly more dangerous than a false alarm. Our model targets MEL Sensitivity ≥ 90%, corresponding to the performance threshold for clinical decision support [Haenssle et al., 2018].
 
 
 
@@ -403,7 +403,9 @@ To quantify result reliability, we applied bootstrap resampling (N=2000, seed=42
 | Weighted F1 | **0.9202** | 0.9039 – 0.9358 |
 | MEL Sensitivity | **0.9396** | 0.8899 – 0.9802 |
 
-> *Table 5b. Bootstrap 95% confidence intervals (N=2000 resamples) on HAM10000 test set (n=1,013). Narrow CIs on AUC (±0.002) confirm result stability. Wider MEL sensitivity CI (±4.5pp) reflects the smaller per-class sample size (n=116 melanoma test cases).*
+> *Table 5b. Bootstrap 95% confidence intervals (N=2000 resamples) on HAM10000 held-out test set (n=1,013). Narrow CIs on AUC (±0.002) confirm result stability. Wider MEL sensitivity CI (±4.5pp) reflects the smaller per-class sample size (n=116 melanoma test cases).*
+
+> **Note on test sets:** Bootstrap CIs are computed on the HAM10000 held-out test set (n=1,013, patient-aware split). The primary results in Table 4 (BalAcc=85.59%, AUC=0.9908) use the full multi-dataset ISIC test split (n=2,260 across HAM10000 + ISIC 2020 + ISIC 2024). The higher CI values here (e.g. BalAcc=0.9547) reflect the cleaner, single-dataset HAM10000 distribution. Both evaluations are complementary and consistent.
 
 The narrow AUC confidence interval (0.9939–0.9977) demonstrates that the 0.9959 point estimate is robustly reproducible and not an artefact of sampling. MEL sensitivity CI width (±4.5pp) is expected given the smaller melanoma subgroup (n=116) and remains well above the diagnostic threshold throughout the interval.
 
@@ -624,7 +626,7 @@ The cross-domain evaluation on PAD-UFES-20 and DERM7PT is a key contribution dis
 
 ### 8.3 Future Work
 
-Planned improvements include: (1) LoRA-based adapter fine-tuning for cross-domain adaptation without catastrophic forgetting [26]; (2) temperature scaling to reduce ECE below 0.02; (3) knowledge distillation to a mobile-deployable compact model [37]; (4) expansion to BCN 20000 [38] and ASAN datasets for improved rare class and skin phototype coverage; (5) 5-fold cross-validation ensemble for more robust evaluation; (6) SAM-based segmentation replacing the Swin-UNet for zero-shot lesion masking.
+Planned improvements include: (1) LoRA-based adapter fine-tuning for cross-domain adaptation without catastrophic forgetting [26]; (2) temperature scaling has been applied (ECE reduced from 0.0661 to 0.0390, §5.2.2); further reduction below 0.02 via ensemble calibration is planned for regulatory-grade deployment; (3) knowledge distillation to a mobile-deployable compact model [37]; (4) expansion to BCN 20000 [38] and ASAN datasets for improved rare class and skin phototype coverage; (5) 5-fold patient-aware cross-validation on the EVA-02 Small backbone has been completed (AUC=0.9512±0.0093, §5.2.5); full 5-fold CV on the complete 401M DermaFusion-AI model is deferred due to computational constraints (~75h GPU); (6) SAM-based segmentation replacing the Swin-UNet for zero-shot lesion masking.
 
 ---
 
