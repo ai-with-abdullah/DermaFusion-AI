@@ -629,7 +629,6 @@ The cross-domain evaluation on PAD-UFES-20 and DERM7PT is a key contribution dis
 Planned improvements include: (1) LoRA-based adapter fine-tuning for cross-domain adaptation without catastrophic forgetting [26]; (2) temperature scaling has been applied (ECE reduced from 0.0661 to 0.0390, §5.2.2); further reduction below 0.02 via ensemble calibration is planned for regulatory-grade deployment; (3) knowledge distillation to a mobile-deployable compact model [37]; (4) expansion to BCN 20000 [38] and ASAN datasets for improved rare class and skin phototype coverage; (5) 5-fold patient-aware cross-validation on the EVA-02 Small backbone has been completed (AUC=0.9512±0.0093, §5.2.5); full 5-fold CV on the complete 401M DermaFusion-AI model is deferred due to computational constraints (~75h GPU); (6) SAM-based segmentation replacing the Swin-UNet for zero-shot lesion masking.
 
 ---
-
 ## 9. CONCLUSION
 
 DermaFusion-AI, a dual-branch fusion architecture combining EVA-02 Large and ConvNeXt V2 with segmentation-guided attention, achieves AUC 0.9908 and melanoma sensitivity 92.2% on the ISIC multi-dataset test benchmark — surpassing the average dermatologist sensitivity. Cross-domain evaluation on PAD-UFES-20 and DERM7PT reveals both the capability of the learned representations (head fine-tuning achieves AUC 0.87 with only 460 PAD-UFES images) and their limitations (catastrophic forgetting under head-only adaptation). GradCAM++ analysis confirms that the model attends to clinically meaningful lesion features.
@@ -672,90 +671,131 @@ This work provides a reproducible, honestly evaluated baseline for dual-branch d
 
 > **Note on dataset citations (marked †):** The HAM10000, PAD-UFES-20, and DERM7PT papers predate 2022 but are the primary dataset citations and cannot be replaced — these are the original papers introducing the specific datasets used in our experiments.
 
-1. Siegel, R. L., et al. (2024). Cancer Statistics, 2024. *CA: A Cancer Journal for Clinicians, 74*(1), 12–49. https://doi.org/10.3322/caac.21820
+1. Siegel, R. L., et al. (2024). Cancer Statistics, 2024. *CA: A Cancer Journal for Clinicians, 74*(1), 12–49.
+   Link: https://doi.org/10.3322/caac.21820
 
-2. American Cancer Society. (2024). Cancer Facts & Figures 2024. Atlanta: ACS. https://www.cancer.org/research/cancer-facts-statistics.html
+2. American Cancer Society. (2024). *Cancer Facts & Figures 2024*. Atlanta: ACS.
+   Link: https://www.cancer.org/research/cancer-facts-statistics.html
 
-3. Morton, C. A., et al. (2022). British guidelines for topical photodynamic therapy and dermoscopy: a clinical and practical update. *British Journal of Dermatology, 188*(3), 438–451. https://doi.org/10.1111/bjd.21070
+3. Morton, C. A., et al. (2022). British guidelines for topical photodynamic therapy and dermoscopy: a clinical and practical update. *British Journal of Dermatology, 188*(3), 438–451.
+   Link: https://doi.org/10.1111/bjd.21070
 
-4. Verma, Y., et al. (2024). ISIC 2024 Challenge: Skin Cancer Detection with 3D Total Body Photography. *Kaggle Competition*. https://www.kaggle.com/competitions/isic-2024-challenge
+4. Verma, Y., et al. (2024). ISIC 2024 Challenge: Skin Cancer Detection with 3D Total Body Photography. *Kaggle Competition*.
+   Link: https://www.kaggle.com/competitions/isic-2024-challenge
 
-5. Rotemberg, V., et al. (2021). A patient-centric dataset of images and metadata for identifying melanomas using clinical context. *Scientific Data, 8*, 34. https://doi.org/10.1038/s41597-021-00815-z
+5. Rotemberg, V., et al. (2021). A patient-centric dataset of images and metadata for identifying melanomas using clinical context. *Scientific Data, 8*, 34.
+   Link: https://doi.org/10.1038/s41597-021-00815-z
 
-6. Adegun, A. A., & Viriri, S. (2023). Deep learning techniques for skin lesion analysis and classification: a systematic review. *Artificial Intelligence Review, 56*, 1049–1086. https://doi.org/10.1007/s10462-022-10250-8
+6. Yadav, D. P., Sharma, B., Chauhan, S., Webber, J. L., & Mehbodniya, A. (2024). Dual scale light weight cross attention transformer for skin lesion classification. *PLOS ONE, 19*(12), e0312598.
+   Link: https://doi.org/10.1371/journal.pone.0312598
 
-7. Abu Owida, H., Abd El-Fattah, I., Abuowaida, S., Alshdaifat, N., Mashagba, H. A., Abd Aziz, A. B., Alzoubi, A., Larguech, S., & Al-Bawri, S. S. (2025). A deep learning-based dual-branch framework for automated skin lesion segmentation and classification via dermoscopic images. Scientific Reports, 15, 37823. 
-https://doi.org/10.1038/s41598-025-21783-z
+7. Abu Owida, H., et al. (2025). A deep learning-based dual-branch framework for automated skin lesion segmentation and classification via dermoscopic images. *Scientific Reports, 15*, 37823.
+   Link: https://doi.org/10.1038/s41598-025-21783-z
 
-8. Ghosh, S., et al. (2022). Domain Adaptation for Skin Lesion Analysis: Understanding the Cross-Domain Shift in Dermoscopy. *arXiv:2211.08577*. https://arxiv.org/abs/2211.08577
+8. Fogelberg, K., Chamarthi, S., Maron, R. C., Niebling, J., & Brinker, T. J. (2023). Domain shifts in dermoscopic skin cancer datasets: Evaluation of essential limitations for clinical translation. *New Biotechnology, 76*, 106–117.
+   Link: https://doi.org/10.1016/j.nbt.2023.05.001
 
-9. Daneshjou, R., et al. (2022). Disparities in Dermatology AI Performance on a Diverse, Curated Clinical Image Set. *Science Advances, 8*(32). https://doi.org/10.1126/sciadv.abq6147
+9. Daneshjou, R., et al. (2022). Disparities in Dermatology AI Performance on a Diverse, Curated Clinical Image Set. *Science Advances, 8*(32).
+   Link: https://doi.org/10.1126/sciadv.abq6147
 
-10. Celebi, M. E., et al. (2024). Dermoscopy Image Analysis: Overview and Future Directions (2024 Update). *IEEE Journal of Biomedical and Health Informatics, 28*(1), 77–95. https://doi.org/10.1109/JBHI.2023.3268704
+10. Younis, A., et al. (2024). Comparative analysis of convolutional neural networks and vision transformers for dermatological image classification. *Procedia Computer Science, 252*, 315–324.
+    Link: https://doi.org/10.1016/j.procs.2024.10.315
 
-11. Al-Masni, M. A., & Kim, D. H. (2023). Skin Lesion Classification Using Vision Transformer with Semi-Supervised Pre-training. *MDPI Diagnostics, 13*(2), 290. https://doi.org/10.3390/diagnostics13020290
+11. Kassem, A. B., et al. (2023). Assist-Dermo: A Lightweight Separable Vision Transformer Model for Multiclass Skin Lesion Classification. *MDPI Diagnostics, 13*(15), 2531.
+    Link: https://doi.org/10.3390/diagnostics13152531
 
-12. Yao, P., et al. (2022). Single Model Deep Learning on Imbalanced Small Datasets for Skin Lesion Classification. *IEEE Transactions on Medical Imaging, 41*(5), 1168–1179. https://doi.org/10.1109/TMI.2021.3136682
+12. Yao, P., et al. (2022). Single Model Deep Learning on Imbalanced Small Datasets for Skin Lesion Classification. *IEEE Transactions on Medical Imaging, 41*(5), 1168–1179.
+    Link: https://doi.org/10.1109/TMI.2021.3136682
 
-13. Cassidy, B., et al. (2022). Analysis of the ISIC Image Datasets: Usage, Benchmarks and Recommendations. *Medical Image Analysis, 75*, 102305. https://doi.org/10.1016/j.media.2021.102305
+13. Cassidy, B., et al. (2022). Analysis of the ISIC Image Datasets: Usage, Benchmarks and Recommendations. *Medical Image Analysis, 75*, 102305.
+    Link: https://doi.org/10.1016/j.media.2021.102305
 
-14. Naeem, A., et al. (2022). DCDNet: Dermatologist-Level Dermoscopy Diagnosis Using Convolutional Neural Networks. *MDPI Diagnostics, 12*(5), 1119. https://doi.org/10.3390/diagnostics12051119
+14. Naeem, A., et al. (2022). SCDNet: A Deep Learning-Based Framework for the Multiclassification of Skin Cancer Using Dermoscopy Images. *Sensors, 22*(15), 5652.
+    Link: https://doi.org/10.3390/s22155652
 
-15. Fang, Y., et al. (2023). EVA-02: A Visual Representation Powerhouse. *arXiv:2303.11331*. https://arxiv.org/abs/2303.11331
+15. Fang, Y., et al. (2023). EVA-02: A Visual Representation Powerhouse. *arXiv:2303.11331*.
+    Link: https://arxiv.org/abs/2303.11331
 
-16. Woo, S., et al. (2023). ConvNeXt V2: Co-designing and Scaling ConvNets with Masked Autoencoders. *CVPR 2023*, pp. 16133–16142. https://arxiv.org/abs/2301.00808
+16. Woo, S., et al. (2023). ConvNeXt V2: Co-designing and Scaling ConvNets with Masked Autoencoders. *CVPR 2023*, pp. 16133–16142.
+    Link: https://arxiv.org/abs/2301.00808
 
-17. Cao, H., et al. (2023). Swin-Unet: Unet-Like Pure Transformer for Medical Image Segmentation. *ECCV Workshops / Springer LNCS, 13803*, 205–218. https://arxiv.org/abs/2105.05537
+17. Cao, H., et al. (2023). Swin-Unet: Unet-Like Pure Transformer for Medical Image Segmentation. *ECCV Workshops / Springer LNCS, 13803*, 205–218.
+    Link: https://arxiv.org/abs/2105.05537
 
-18. Chen, J., et al. (2024). DSCATNet: Dual-Scale Cross-Attention Transformer for Skin Lesion Classification. *PLOS ONE, 19*(12). https://doi.org/10.1371/journal.pone.0312678
+18. Chen, J., et al. (2024). DSCATNet: Dual-Scale Cross-Attention Transformer for Skin Lesion Classification. *PLOS ONE, 19*(12).
+    Link: https://doi.org/10.1371/journal.pone.0312678
 
-19. Brinker, T. J., et al. (2022). Deep learning outperformed 136 of 157 dermatologists in a head-to-head dermoscopic melanoma image classification task. *European Journal of Cancer, 169*, 30–38. https://doi.org/10.1016/j.ejca.2022.04.016
+19. Cornetta, S. L., et al. (2024). A systematic review and meta-analysis of artificial intelligence versus clinicians for skin cancer diagnosis. *npj Digital Medicine, 7*, 118.
+    Link: https://doi.org/10.1038/s41746-024-01103-x
 
-20. Pachón-García, C., et al. (2023). DermaKNet: Incorporating the Knowledge of Dermatologists to CNNs for Skin Lesion Diagnosis. *Artificial Intelligence in Medicine, 135*, 102459. https://doi.org/10.1016/j.artmed.2022.102459
+20. Pachón-García, C., et al. (2023). DermaKNet: Incorporating the Knowledge of Dermatologists to CNNs for Skin Lesion Diagnosis. *Artificial Intelligence in Medicine, 135*, 102459.
+    Link: https://doi.org/10.1016/j.artmed.2022.102459
 
-21. He, K., et al. (2022). Masked Autoencoders Are Scalable Vision Learners. *CVPR 2022*, pp. 16000–16009. https://arxiv.org/abs/2111.06377
+21. He, K., et al. (2022). Masked Autoencoders Are Scalable Vision Learners. *CVPR 2022*, pp. 16000–16009.
+    Link: https://arxiv.org/abs/2111.06377
 
-22. Alam, M. N., et al. (2024). A Dual-Stream Framework for Skin Lesion Diagnosis using Histopathological and Vision Features. *Computers in Biology and Medicine, 169*, 107865. https://doi.org/10.1016/j.compbiomed.2024.107865
+22. Tang, P., et al. (2022). FusionM4Net: A multi-stage multi-modal learning algorithm for multi-label skin lesion classification. *Medical Image Analysis, 76*, 102307.
+    Link: https://doi.org/10.1016/j.media.2021.102307
 
-23. Li, X., et al. (2023). UNeXt: MLP-based Rapid Medical Image Segmentation Network. *arXiv:2203.04967*, published *Medical Image Analysis, 89*, 102891. https://arxiv.org/abs/2203.04967
+23. Li, X., et al. (2022). UNeXt: MLP-based Rapid Medical Image Segmentation Network. *arXiv:2203.04967*, published *Medical Image Analysis, 89*, 102891.
+    Link: https://arxiv.org/abs/2203.04967
 
-24. Hasan, M. K., et al. (2024). Melanoma Skin Cancer Detection Using GradCAM and Vision Transformers. *MDPI Diagnostics, 14*(3), 307. https://doi.org/10.3390/diagnostics14030307
+24. Hussain, A., et al. (2023). Skin Cancer Detection Using Deep Learning — A Review. *MDPI Diagnostics, 13*(11), 1911.
+    Link: https://doi.org/10.3390/diagnostics13111911
 
-25. Perez, E., & Wang, J. (2024). Skin Lesion Classification Using Vision Transformer and Grad-CAM: A Systematic Review. *IEEE Access, 12*, 23467–23482. https://doi.org/10.1109/ACCESS.2024.3356221
+25. Himel, G. M. S., Islam, M. M., Al-Aff, K. A., Karim, S. I., & Sikder, M. K. U. (2024). Skin Cancer Segmentation and Classification Using Vision Transformer for Automatic Analysis in Dermatoscopy-Based Noninvasive Digital System. *International Journal of Biomedical Imaging, 2024*, 3022192.
+    Link: https://doi.org/10.1155/2024/3022192
 
-26. Hu, E. J., et al. (2022). LoRA: Low-Rank Adaptation of Large Language Models. *ICLR 2022*. https://arxiv.org/abs/2106.09685
+26. Hu, E. J., et al. (2021). LoRA: Low-Rank Adaptation of Large Language Models. *ICLR 2022*.
+    Link: https://arxiv.org/abs/2106.09685
 
-27. Yao, P., et al. (2023). Skin Lesion Classification with Improved Deep Learning on Imbalanced Multi-Dataset Benchmarks. *IEEE TMI, 42*(3), 712–723. https://doi.org/10.1109/TMI.2022.3218526
+27. Bistroń, M., & Piotrowski, Z. (2022). Comparison of Machine Learning Algorithms Used for Skin Cancer Diagnosis. *Applied Sciences, 12*(19), 9960.
+    Link: https://doi.org/10.3390/app12199960
 
-28. Tschandl, P., Rosendahl, C., & Kittler, H. (2018). The HAM10000 Dataset. *Scientific Data, 5*, 180161. † https://doi.org/10.1038/sdata.2018.161
+28. Tschandl, P., Rosendahl, C., & Kittler, H. (2018). The HAM10000 Dataset. *Scientific Data, 5*, 180161. †
+    Link: https://doi.org/10.1038/sdata.2018.161
 
-29. Ju, L., et al. (2022). Flexible Sampling for Long-Tailed Skin Lesion Classification. *MICCAI 2022, LNCS 13433*, 462–471. https://doi.org/10.1007/978-3-031-16437-8_44
+29. Ju, L., et al. (2022). Flexible Sampling for Long-Tailed Skin Lesion Classification. *MICCAI 2022, LNCS 13433*, 462–471.
+    Link: https://doi.org/10.1007/978-3-031-16437-8_44
 
-30. Mirikharaji, Z., et al. (2023). A Survey on Deep Learning for Skin Lesion Segmentation. *Medical Image Analysis, 88*, 102863. https://doi.org/10.1016/j.media.2023.102863
+30. Mirikharaji, Z., et al. (2023). A Survey on Deep Learning for Skin Lesion Segmentation. *Medical Image Analysis, 88*, 102863.
+    Link: https://doi.org/10.1016/j.media.2023.102863
 
-31. Dar, M. N., et al. (2023). A Transfer Learning-Based Framework for Skin Lesion Classification with Augmentation. *Applied Sciences, 13*(6), 3776. https://doi.org/10.3390/app13063776
+31. Djaroudib, K., Lorenz, P., Belkacem Bouzida, R., & Merzougui, H. (2024). Skin Cancer Diagnosis Using VGG16 and Transfer Learning: Analyzing the Effects of Data Quality over Quantity on Model Efficiency. *Applied Sciences, 14*(17), 7447.
+    Link: https://doi.org/10.3390/app14177447
 
-32. Pacheco, A. G. C., et al. (2020). PAD-UFES-20: A Skin Lesion Dataset Composed of Patient Data and Clinical Images Collected from Smartphones. *Data in Brief, 32*, 106221. † https://doi.org/10.1016/j.dib.2020.106221
+32. Pacheco, A. G. C., et al. (2020). PAD-UFES-20: A Skin Lesion Dataset Composed of Patient Data and Clinical Images Collected from Smartphones. *Data in Brief, 32*, 106221. †
+    Link: https://doi.org/10.1016/j.dib.2020.106221
 
-33. Kawahara, J., et al. (2019). Seven-Point Checklist and Skin Lesion Classification Using Multi-Task Multi-Modal Neural Nets. *IEEE JBHI, 23*(2), 538–546. † https://doi.org/10.1109/JBHI.2018.2824327
+33. Kawahara, J., et al. (2019). Seven-Point Checklist and Skin Lesion Classification Using Multi-Task Multi-Modal Neural Nets. *IEEE JBHI, 23*(2), 538–546. †
+    Link: https://doi.org/10.1109/JBHI.2018.2824327
 
-34. Kassem, M. A., et al. (2022). Skin Lesion Classification Using Vision Transformer Networks via Self-Attention Fusion. *Sensors, 22*(13), 4714. https://doi.org/10.3390/s22134714
+34. Rehman, M. Z. U., Ahmed, F., Alsuhibany, S. A., Jamal, S. S., Ali, M. Z., & Ahmad, J. (2022). Classification of Skin Cancer Lesions Using Explainable Deep Learning. *Sensors, 22*(18), 6915.
+    Link: https://doi.org/10.3390/s22186915
 
-35. Tang, P., et al. (2022). Dermatologist-Level Skin Cancer Classification Using Vision Transformer with Hierarchical Attention. *Pattern Recognition Letters, 162*, 28–35. https://doi.org/10.1016/j.patrec.2022.08.011
+35. Mukherjee, R., Sain, M., & Dey, A. (2025). DermViT: Diagnosis-Guided Vision Transformer with Dermoscopic Hierarchical Attention for Robust Skin Lesion Classification. *Bioengineering, 12*(4), 421.
+    Link: https://doi.org/10.3390/bioengineering12040421
 
-36. Wu, Z., et al. (2024). Knowledge Distillation for Skin Lesion Classification Using Multi-Teacher Fusion. *arXiv:2401.12042*. https://arxiv.org/abs/2401.12042
+36. Pavel, M. A., Asad, R., Michael, G. K. O., Ikramuzzaman, M., Mustakim, M., & Khan, R. (2025). Multi-stage knowledge distillation with layer fusion-based deep learning approach for skin cancer classification. *Scientific Reports, 15*(1), 39792.
+    Link: https://www.nature.com/articles/s41598-025-23403-2
 
-37. Combalia, M., et al. (2022). BCN20000: Dermoscopic Lesions in the Wild. *ISIC Archive*. https://arxiv.org/abs/1908.02288
+37. Hernández-Pérez, C., Combalia, M., et al. (2024). BCN20000: Dermoscopic Lesions in the Wild. *Scientific Data, 11*, 641.
+    Link: https://www.nature.com/articles/s41597-024-03387-w
 
-38. Maron, R. C., et al. (2022). Benchmark Analysis of Various State-of-the-Art Classification Algorithms for Skin Lesions. *MDPI Applied Sciences, 12*(14), 7207. https://doi.org/10.3390/app12147207
+38. Thwin, T. T., & Park, H. (2024). Skin Lesion Classification Using a Deep Ensemble Model Across Different Datasets. *Applied Sciences, 14*(13), 5599.
+    Link: https://doi.org/10.3390/app14135599
 
-39. Thurnhofer-Hemsi, K., & Dominguez, E. (2022). A CNN-Based Framework for Classification of Skin Lesion Subtypes. *Processes, 10*(8), 1429. https://doi.org/10.3390/pr10081429
+39. Ali, M. U., Khalid, M., Alshanbari, H., Zafar, A., & Lee, S. W. (2023). Enhancing Skin Lesion Detection: A Multistage Multiclass Convolutional Neural Network-Based Framework. *Bioengineering, 10*(12), 1430.
+    Link: https://doi.org/10.3390/bioengineering10121430
 
-40. Esteva, A., Kuprel, B., Novoa, R. A., Ko, J., Swetter, S. M., Blau, H. M., & Thrun, S. (2017). Dermatologist-level classification of skin cancer with deep neural networks. *Nature, 542*, 115–118. https://doi.org/10.1038/nature21056
+40. Esteva, A., Kuprel, B., Novoa, R. A., Ko, J., Swetter, S. M., Blau, H. M., & Thrun, S. (2017). Dermatologist-level classification of skin cancer with deep neural networks. *Nature, 542*, 115–118.
+    Link: https://doi.org/10.1038/nature21056
 
-41. Haenssle, H. A., Fink, C., Schneiderbauer, R., Toberer, F., Buhl, T., Blum, A., et al. (2018). Man against machine: diagnostic performance of a deep learning convolutional neural network for dermoscopic melanoma recognition in comparison to 58 dermatologists. *Annals of Oncology, 29*(8), 1836–1842. https://doi.org/10.1093/annonc/mdy166
+41. Haenssle, H. A., Fink, C., Schneiderbauer, R., Toberer, F., Buhl, T., Blum, A., et al. (2018). Man against machine: diagnostic performance of a deep learning convolutional neural network for dermoscopic melanoma recognition in comparison to 58 dermatologists. *Annals of Oncology, 29*(8), 1836–1842.
+    Link: https://doi.org/10.1093/annonc/mdy166
 
-42. Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). On Calibration of Modern Neural Networks. *ICML 2017, PMLR 70*, 1321–1330. https://arxiv.org/abs/1706.04599
+42. Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). On Calibration of Modern Neural Networks. *ICML 2017, PMLR 70*, 1321–1330.
+    Link: https://arxiv.org/abs/1706.04599
 
 ---
 
