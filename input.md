@@ -68,7 +68,7 @@ The combination of EVA-02 Large + ConvNeXt V2 + Swin-UNet segmentation was chose
 
 ### 2.1 Skin Lesion Classification
 
-Early deep learning approaches applied ImageNet-pretrained CNNs to HAM10000. Esteva et al. [19] demonstrated CNN performance matching dermatologist accuracy in binary malignancy classification. EfficientNet variants dominated the ISIC 2019/2020 challenges (~0.94 AUC) [20]. The ISIC 2024 winning teams used large pre-trained ViTs (EVA-02, ViT-L/14) with ensembling, reporting AUC 0.97–0.99 [4]. Recent dual-branch systems [7, 21] have improved over single-backbone approaches by combining CNNs with transformers, but none use segmentation-guided branch specialisation.
+Early deep learning approaches applied ImageNet-pretrained CNNs to HAM10000. Esteva et al. [40] demonstrated CNN performance matching dermatologist accuracy in binary malignancy classification. EfficientNet variants dominated the ISIC 2019/2020 challenges (~0.94 AUC) [20]. The ISIC 2024 winning teams used large pre-trained ViTs (EVA-02, ViT-L/14) with ensembling, reporting AUC 0.97–0.99 [4]. Recent dual-branch systems [7, 21] have improved over single-backbone approaches by combining CNNs with transformers, but none use segmentation-guided branch specialisation.
 
 ### 2.2 Dual-Branch and Fusion Architectures
 
@@ -262,7 +262,7 @@ Balanced accuracy is the mean of per-class recall (sensitivity), making it robus
 **Melanoma Sensitivity (MEL Sensitivity):**
 $$\text{MEL Sensitivity} = \text{Recall}_{\text{mel}} = \frac{TP_{\text{mel}}}{TP_{\text{mel}} + FN_{\text{mel}}}$$
 
-where $TP_{\text{mel}}$ is the number of melanoma cases correctly predicted as melanoma and $FN_{\text{mel}}$ is the number of melanoma cases incorrectly classified as benign. MEL Sensitivity is the single most clinically critical metric in skin cancer AI — a missed melanoma (false negative) is significantly more dangerous than a false alarm. Our model targets MEL Sensitivity ≥ 90%, corresponding to the performance threshold for clinical decision support [Haenssle et al., 2018].
+where $TP_{\text{mel}}$ is the number of melanoma cases correctly predicted as melanoma and $FN_{\text{mel}}$ is the number of melanoma cases incorrectly classified as benign. MEL Sensitivity is the single most clinically critical metric in skin cancer AI — a missed melanoma (false negative) is significantly more dangerous than a false alarm. Our model targets MEL Sensitivity ≥ 90%, corresponding to the performance threshold for clinical decision support [41].
 
 
 
@@ -411,7 +411,7 @@ The narrow AUC confidence interval (0.9939–0.9977) demonstrates that the 0.995
 
 ### 5.2.2 Model Calibration — Temperature Scaling
 
-Raw model confidence (ECE=0.0661) indicates moderate overconfidence, a known property of large pre-trained transformers. We applied temperature scaling [Guo et al., 2017] — a single post-hoc scalar calibration fitted on the validation set (n=967 samples):
+Raw model confidence (ECE=0.0661) indicates moderate overconfidence, a known property of large pre-trained transformers. We applied temperature scaling [42] — a single post-hoc scalar calibration fitted on the validation set (n=967 samples):
 
 | Metric | Before Calibration | After Calibration |
 |---|---|---|
@@ -589,11 +589,11 @@ Across all analysed cases, three consistent patterns emerge: (1) EVA-02 rollout 
 
 | Method | Backbone | AUC | Bal. Acc | MEL Sens. | Dataset | Year |
 |---|---|---|---|---|---|---|
-| Esteva et al. [19] | GoogleNet | ~0.96 | — | ~76% | Binary | 2017 |
+| Esteva et al. [40] | GoogleNet | ~0.96 | — | ~76% | Binary | 2017 |
 | EfficientNet-B7 [20] | EfficientNet-B7 | ~0.940 | ~72% | ~82% | HAM10000 | 2020 |
-| Kassem et al. [35] | ViT Self-Attention Fusion | ~0.961 | ~76% | ~84% | HAM10000 | 2022 |
-| Tang et al. [36] | ViT Hierarchical Attention | ~0.960 | ~77% | ~83% | ISIC 2019 | 2022 |
-| DSCATNet [22] | Dual Cross-Attn Transformer | ~0.973 | ~79% | ~86% | HAM10000 | 2024 |
+| Kassem et al. [11] | ViT Lightweight Transformer | ~0.961 | ~76% | ~84% | HAM10000 | 2023 |
+| Mukherjee et al. [35] | ViT Hierarchical Attention (DermViT) | ~0.962 | ~78% | ~84% | ISIC 2019 | 2025 |
+| DSCATNet [18] | Dual Cross-Attn Transformer | ~0.973 | ~79% | ~86% | HAM10000 | 2024 |
 | ISIC 2024 Top Teams [4] | EVA-02 / ViT-L Ensemble | 0.97–0.99 | ~80–88% | ~88–94% | ISIC 2024 | 2024 |
 | Average Dermatologist [1] | — | ~0.86 | ~70% | **~86%** | Clinical | — |
 | **DermaFusion-AI (Ours)** | **EVA-02 L + ConvNeXt V2** | **0.9908** | **85.6%** | **92.2%** | **ISIC multi** | **2026** |
@@ -750,6 +750,12 @@ https://doi.org/10.1038/s41598-025-21783-z
 38. Maron, R. C., et al. (2022). Benchmark Analysis of Various State-of-the-Art Classification Algorithms for Skin Lesions. *MDPI Applied Sciences, 12*(14), 7207. https://doi.org/10.3390/app12147207
 
 39. Thurnhofer-Hemsi, K., & Dominguez, E. (2022). A CNN-Based Framework for Classification of Skin Lesion Subtypes. *Processes, 10*(8), 1429. https://doi.org/10.3390/pr10081429
+
+40. Esteva, A., Kuprel, B., Novoa, R. A., Ko, J., Swetter, S. M., Blau, H. M., & Thrun, S. (2017). Dermatologist-level classification of skin cancer with deep neural networks. *Nature, 542*, 115–118. https://doi.org/10.1038/nature21056
+
+41. Haenssle, H. A., Fink, C., Schneiderbauer, R., Toberer, F., Buhl, T., Blum, A., et al. (2018). Man against machine: diagnostic performance of a deep learning convolutional neural network for dermoscopic melanoma recognition in comparison to 58 dermatologists. *Annals of Oncology, 29*(8), 1836–1842. https://doi.org/10.1093/annonc/mdy166
+
+42. Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). On Calibration of Modern Neural Networks. *ICML 2017, PMLR 70*, 1321–1330. https://arxiv.org/abs/1706.04599
 
 ---
 
