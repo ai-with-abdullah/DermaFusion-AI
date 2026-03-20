@@ -5,7 +5,7 @@
 ### A Dual-Branch EVA-02 + ConvNeXt Fusion Architecture with Segmentation-Guided Attention  
 ### for Multi-Class Skin Lesion Classification
 
-[![Paper](https://img.shields.io/badge/Paper-DermaFusion_AI_Paper.pdf-blue?logo=adobeacrobatreader)](./DermaFusion_AI_Paper.pdf)
+[![Paper](https://img.shields.io/badge/DermaFusion-AI.pdf-blue?logo=adobeacrobatreader)](./DermaFusion_AI_Paper.pdf)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
