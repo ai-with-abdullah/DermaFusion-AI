@@ -35,7 +35,7 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
         
         with autocast('cuda', enabled=(device == 'cuda')):
             logits = model(images)
-            loss = criterion(logits, masks)
+        loss = criterion(logits.float(), masks)
             
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)  # unscale before clipping
@@ -69,7 +69,7 @@ def validate(model, loader, criterion, device):
             
             with autocast('cuda', enabled=(device == 'cuda')):
                 logits = model(images)
-                loss = criterion(logits, masks)
+            loss = criterion(logits.float(), masks)
                 
             dice = compute_dice_score(logits, masks)
             

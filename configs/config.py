@@ -86,7 +86,7 @@ class Config:
     # Segmentation Model
     # =========================================================================
     SEG_MODEL         = "swin_unet"    # 'swin_unet' | 'lightweight_unet' (legacy)
-    SEG_LR            = 1e-4
+    SEG_LR            = 3e-5
     SEG_WEIGHT_DECAY  = 1e-4
 
     # =========================================================================
