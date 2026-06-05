@@ -12,6 +12,9 @@ import sys
 import os
 # Prioritize local modules over Hugging Face 'datasets' library
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+for k in list(sys.modules.keys()):
+    if k == 'datasets' or k.startswith('datasets.'):
+        sys.modules.pop(k)
 
 import torch
 from tqdm import tqdm
