@@ -10,7 +10,11 @@ Key upgrades over previous version:
   ✓ Richer metrics logging (balanced acc, per-class sens/spec, ECE)
 """
 
+import sys
 import os
+# Prioritize local modules over Hugging Face 'datasets' library
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
 # Reduce CUDA memory fragmentation — recommended by PyTorch for large models
 os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
 os.environ.setdefault('PYTORCH_ALLOC_CONF', 'expandable_segments:True')  # PyTorch >= 2.2

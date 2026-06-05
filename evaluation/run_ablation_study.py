@@ -13,7 +13,11 @@ Saves results to outputs/ablation_study_results.csv
 Generates comparison plot outputs/plots/ablation_study_bar.png
 """
 
+import sys
 import os
+# Prioritize local modules over Hugging Face 'datasets' library
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import torch
 import numpy as np
 import pandas as pd

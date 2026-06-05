@@ -8,7 +8,11 @@ Upgrades over previous version:
   ✓ Multi-dataset unified loader
 """
 
+import sys
 import os
+# Prioritize local modules over Hugging Face 'datasets' library
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
 import torch
 from tqdm import tqdm
 import numpy as np
