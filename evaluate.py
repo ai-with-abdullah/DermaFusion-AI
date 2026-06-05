@@ -34,20 +34,36 @@ from training.tta import TTAInference
 
 
 def plot_multiclass_roc(y_true, y_pred_probs, save_path):
-    plt.figure(figsize=(10, 8))
-    for i, cls in enumerate(config.CLASSES):
-        y_true_bin = (y_true == i).astype(int)
-        fpr, tpr, _ = roc_curve(y_true_bin, y_pred_probs[:, i])
-        roc_auc = auc(fpr, tpr)
-        plt.plot(fpr, tpr, lw=2, label=f'{cls} (AUC={roc_auc:.3f})')
-    plt.plot([0, 1], [0, 1], 'k--', lw=2)
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('Multi-class ROC (TTA) — EVA-02 + ConvNeXt V2 Fusion')
-    plt.legend(loc="lower right", fontsize=8)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150)
-    plt.close()
+    with plt.style.context("dark_background"):
+        plt.figure(figsize=(11, 9), facecolor="#0d0d0d")
+        ax = plt.gca()
+        ax.set_facecolor("#0d0d0d")
+
+        # Color palette for curves
+        colors = plt.cm.plasma(np.linspace(0.1, 0.9, len(config.CLASSES)))
+
+        for i, cls in enumerate(config.CLASSES):
+            y_true_bin = (y_true == i).astype(int)
+            fpr, tpr, _ = roc_curve(y_true_bin, y_pred_probs[:, i])
+            roc_auc = auc(fpr, tpr)
+            plt.plot(fpr, tpr, lw=2.5, color=colors[i], label=f'{cls.upper()} (AUC = {roc_auc:.4f})')
+
+        plt.plot([0, 1], [0, 1], 'k--', color='#555555', lw=1.5, linestyle="--")
+        plt.xlabel('FALSE POSITIVE RATE', color='#94a3b8', fontsize=10, fontweight="semibold", labelpad=12)
+        plt.ylabel('TRUE POSITIVE RATE', color='#94a3b8', fontsize=10, fontweight="semibold", labelpad=12)
+        plt.title('RECEIVER OPERATING CHARACTERISTIC (ROC) CURVES', color='#ffec5c', fontsize=13, fontweight="bold", pad=20)
+
+        plt.legend(loc="lower right", fontsize=9, facecolor='#151515', edgecolor='#333333', labelcolor='#e2e8f0')
+        plt.grid(color='#222222', linestyle='-', linewidth=0.5)
+
+        # Style spine/borders
+        for spine in ax.spines.values():
+            spine.set_color('#333333')
+            spine.set_linewidth(1.0)
+
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=180, bbox_inches='tight', facecolor='#0d0d0d')
+        plt.close()
 
 
 def main():

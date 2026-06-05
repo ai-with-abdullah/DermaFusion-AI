@@ -46,10 +46,10 @@ def _denorm(tensor: torch.Tensor) -> np.ndarray:
 
 def _overlay(img_rgb: np.ndarray, cam: np.ndarray, alpha: float = 0.55) -> np.ndarray:
     cam_norm = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
-    cam_uint = (cam_norm * 255).astype(np.uint8)
-    heatmap  = cv2.applyColorMap(cam_uint, cv2.COLORMAP_JET)
-    heatmap  = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-    heatmap  = cv2.resize(heatmap, (img_rgb.shape[1], img_rgb.shape[0]))
+    # Resize cam_norm first to target size
+    cam_resized = cv2.resize(cam_norm, (img_rgb.shape[1], img_rgb.shape[0]), interpolation=cv2.INTER_CUBIC)
+    # Apply custom skin-cancer-aware colormap instead of generic JET
+    heatmap = (_SKIN_CMAP(cam_resized)[:, :, :3] * 255).astype(np.uint8)
     return (alpha * heatmap + (1 - alpha) * img_rgb).astype(np.uint8)
 
 
@@ -183,30 +183,46 @@ class ConvNeXtGradCAMPP:
 
 class EVAGradCAMPP:
     """
-    Spatial attention map for the EVA-02 ViT branch via Attention Rollout.
-
-    ViT models don't have spatial convolutions, so true GradCAM++ is not
-    directly applicable. We use Attention Rollout:
-      - Extract attention weights from all transformer blocks
-      - Recursively multiply through to get input→output attention map
-      - Reshape patch attention → (H, W) spatial map
-
-    Reference: Abnar & Zuidema, 2020 (Quantifying Attention Flow in Transformers)
+    Grad-CAM on Attention for the EVA-02 ViT branch.
+    Hooks into the attention block of the final transformer layer and
+    weights the attention weights by backpropagated class gradients.
+    Falls back to Attention Rollout if gradient propagation is not possible.
     """
 
     def __init__(self, model, device: str = 'cpu'):
         self.model  = model
         self.device = device
+        self._acts  = {}
+        self._grads = {}
+        self._handles = []
+
+    def _register_hooks(self, target_layer: nn.Module):
+        def fwd(m, inp, out):
+            # inp[0] is the attention weights tensor of shape (B, heads, N, N)
+            self._acts['attn'] = inp[0].detach().clone()
+
+        def bwd(m, gin, gout):
+            # gout[0] is the gradient of loss w.r.t the output of attn_drop
+            self._grads['attn'] = gout[0].detach().clone()
+
+        self._handles.append(target_layer.register_forward_hook(fwd))
+        self._handles.append(target_layer.register_full_backward_hook(bwd))
+
+    def _remove_hooks(self):
+        for h in self._handles:
+            h.remove()
+        self._handles.clear()
 
     def generate(
         self,
         image_tensor: torch.Tensor,    # (3, H, W) normalized
-        discard_ratio: float = 0.5,
+        target_class: int,
+        discard_ratio: float = 0.4,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Returns:
-            rollout_map: (H, W) attention rollout map
-            blend_img:   (H, W, 3) overlay on original image
+            cam_map:   (H, W) Grad-CAM attention map
+            blend_img: (H, W, 3) overlay on original image
         """
         H, W = image_tensor.shape[1], image_tensor.shape[2]
         img_rgb = _denorm(image_tensor)
@@ -214,92 +230,107 @@ class EVAGradCAMPP:
         eva_backbone = self.model.branch_eva.backbone
         self.model.eval()
 
-        attn_maps = []
-
-        # FIX: Hook attn_drop (nn.Dropout inside EvaAttention) instead of the
-        # attention module output. timm's EvaAttention.forward() returns only the
-        # projected output tensor — it never returns attention weights in a tuple.
-        # attn_drop always receives the post-softmax (B, heads, N, N) attention
-        # matrix as its first positional input, making it a reliable hook point.
-        def attn_hook(m, inp, out):
-            # inp[0] is the attention weight matrix (B, heads, N, N)
-            if inp and inp[0] is not None and inp[0].dim() == 4:
-                attn_maps.append(inp[0].detach().cpu())
-
-        handles = []
-        for block in getattr(eva_backbone, 'blocks', []):
-            attn_module = getattr(block, 'attn', None)
+        # Find target layer: last block's attn_drop
+        target_layer = None
+        blocks = getattr(eva_backbone, 'blocks', [])
+        if blocks:
+            attn_module = getattr(blocks[-1], 'attn', None)
             if attn_module is not None:
-                # Hook attn_drop inside the attention module
-                attn_drop = getattr(attn_module, 'attn_drop', None)
-                if attn_drop is not None:
-                    handles.append(attn_drop.register_forward_hook(attn_hook))
-                else:
-                    # Fallback: hook the attention module itself (older timm)
-                    handles.append(attn_module.register_forward_hook(
-                        lambda m, i, o: attn_maps.append(o[1].detach().cpu())
-                        if isinstance(o, tuple) and len(o) >= 2 and o[1] is not None else None
-                    ))
+                target_layer = getattr(attn_module, 'attn_drop', None)
 
-        try:
-            with torch.no_grad():
-                x = image_tensor.unsqueeze(0).to(self.device)
-                # Resize to EVA-02 expected input
+        # Run with Grad-CAM if target layer exists
+        use_rollout = True
+        if target_layer is not None:
+            self._register_hooks(target_layer)
+            self.model.zero_grad()
+            try:
+                x = image_tensor.unsqueeze(0).to(self.device).requires_grad_(True)
                 tgt = eva_backbone.default_cfg.get('input_size', (3, 336, 336))[-2:]
                 if x.shape[-2:] != tgt:
                     x = F.interpolate(x, size=tgt, mode='bicubic', align_corners=False)
-                _ = eva_backbone.forward_features(x)
-        except Exception as e:
-            print(f"[EVAGradCAM++] Warning: {e}")
-        finally:
-            for h in handles:
-                h.remove()
+                
+                # We need full forward to pass through head
+                x_seg = x.detach()
+                logits, _ = self.model(x, x_seg)
+                score = logits[0, target_class]
+                score.backward()
+                use_rollout = False
+            except Exception as e:
+                print(f"[EVAGradCAM++] Grad-CAM backward failed, falling back to Rollout: {e}")
+            finally:
+                self._remove_hooks()
 
-        if not attn_maps:
-            # Fallback to patch token norms
+        if not use_rollout and 'attn' in self._acts and 'attn' in self._grads:
+            # Grad-CAM attention weighting
+            acts = self._acts['attn'][0]    # (heads, N, N)
+            grads = self._grads['attn'][0]  # (heads, N, N)
+
+            # Head weights = mean gradient over keys/queries
+            weights = grads.mean(dim=[-2, -1], keepdim=True)  # (heads, 1, 1)
+            # Weighted combination over heads
+            cam = F.relu(weights * acts).sum(dim=0)          # (N, N)
+
+            # CLS token index is 0, retrieve its attention to all other patch tokens
+            cls_attn = cam[0, 1:].cpu().float().numpy()      # (N-1,)
+            # Apply threshold
+            threshold = np.percentile(cls_attn, discard_ratio * 100)
+            cls_attn[cls_attn < threshold] = 0.0
+            
+            side = int(math.sqrt(len(cls_attn)))
+            cam_map = cls_attn[:side*side].reshape(side, side).astype(np.float32)
+            
+            self.model.zero_grad()
+            self._acts.clear()
+            self._grads.clear()
+        else:
+            # Fallback: Attention Rollout (class-agnostic)
+            attn_maps = []
+            def rollout_hook(m, inp, out):
+                if inp and inp[0] is not None and inp[0].dim() == 4:
+                    attn_maps.append(inp[0].detach().cpu())
+
+            handles = []
+            for block in blocks:
+                attn_m = getattr(block, 'attn', None)
+                if attn_m is not None:
+                    drop = getattr(attn_m, 'attn_drop', None)
+                    if drop is not None:
+                        handles.append(drop.register_forward_hook(rollout_hook))
+
             try:
                 with torch.no_grad():
                     x = image_tensor.unsqueeze(0).to(self.device)
                     tgt = eva_backbone.default_cfg.get('input_size', (3, 336, 336))[-2:]
                     if x.shape[-2:] != tgt:
                         x = F.interpolate(x, size=tgt, mode='bicubic', align_corners=False)
-                    feats = eva_backbone.forward_features(x)   # (1, N, D)
-                    if feats.dim() == 3:
-                        tokens = feats[0, 1:] if feats.shape[1] % 2 != 0 else feats[0]
-                        norms  = tokens.norm(dim=-1).cpu().numpy()
-                        side   = int(math.sqrt(len(norms)))
-                        cam    = norms[:side*side].reshape(side, side).astype(np.float32)
-                    else:
-                        cam = np.random.rand(14, 14).astype(np.float32)
-            except Exception:
-                cam = np.random.rand(14, 14).astype(np.float32)
-        else:
-            # Attention Rollout: multiply through all layers
-            result = None
-            for attn in attn_maps:
-                # attn: (B, heads, N, N) or (B, heads, 1, 1)
-                if attn.dim() == 4 and attn.shape[-1] > 1:
-                    attn_mean = attn[0].mean(0)          # (N, N) — avg heads
-                    # Add identity skip connection
-                    attn_mean = attn_mean + torch.eye(attn_mean.shape[0])
-                    attn_mean = attn_mean / attn_mean.sum(dim=-1, keepdim=True)
-                    if result is None:
-                        result = attn_mean
-                    else:
-                        result = torch.mm(attn_mean, result)
+                    _ = eva_backbone.forward_features(x)
+            except Exception as e:
+                print(f"[EVAGradCAM++] Rollout forward failed: {e}")
+            finally:
+                for h in handles:
+                    h.remove()
 
-            if result is None:
-                cam = np.random.rand(14, 14).astype(np.float32)
+            if not attn_maps:
+                cam_map = np.random.rand(14, 14).astype(np.float32)
             else:
-                # CLS token attends to all patches → row 0 is rollout
-                cls_attn = result[0, 1:].numpy()           # (N-1,) patch tokens
-                # Apply discard_ratio
-                threshold = np.percentile(cls_attn, discard_ratio * 100)
-                cls_attn[cls_attn < threshold] = 0
-                side = int(math.sqrt(len(cls_attn)))
-                cam  = cls_attn[:side*side].reshape(side, side).astype(np.float32)
+                result = None
+                for attn in attn_maps:
+                    if attn.dim() == 4 and attn.shape[-1] > 1:
+                        attn_mean = attn[0].mean(0)
+                        attn_mean = attn_mean + torch.eye(attn_mean.shape[0])
+                        attn_mean = attn_mean / attn_mean.sum(dim=-1, keepdim=True)
+                        result = attn_mean if result is None else torch.mm(attn_mean, result)
 
-        cam_up = cv2.resize(cam, (W, H), interpolation=cv2.INTER_CUBIC)
+                if result is None:
+                    cam_map = np.random.rand(14, 14).astype(np.float32)
+                else:
+                    cls_attn = result[0, 1:].numpy()
+                    threshold = np.percentile(cls_attn, discard_ratio * 100)
+                    cls_attn[cls_attn < threshold] = 0
+                    side = int(math.sqrt(len(cls_attn)))
+                    cam_map = cls_attn[:side*side].reshape(side, side).astype(np.float32)
+
+        cam_up = cv2.resize(cam_map, (W, H), interpolation=cv2.INTER_CUBIC)
         return cam_up, _overlay(img_rgb, cam_up)
 
 
@@ -334,8 +365,8 @@ def generate_dual_gradcam(
     if seg_for_cam is not None and seg_for_cam.std().item() < 0.03:
         seg_for_cam = None  # UNet produced flat mask — don't corrupt GradCAM
 
-    # Generate maps
-    eva_map_up,   eva_blend   = eva_cam.generate(image_tensor)
+    # Generate maps (passing target_class to both for class-specific visualisations)
+    eva_map_up,   eva_blend   = eva_cam.generate(image_tensor, target_class)
     conv_map_up,  conv_blend  = convnext_cam.generate(image_tensor, target_class, seg_for_cam)
 
     # Fuse: equal weight average (could be gated by actual gate values)

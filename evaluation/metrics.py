@@ -245,34 +245,91 @@ def plot_confusion_matrix(
     save_path: str = None,
     normalize: bool = True,
 ) -> None:
-    """Plots and optionally saves a normalized confusion matrix."""
+    """Plots and optionally saves a normalized confusion matrix with premium dark-mode styling."""
+    from matplotlib.colors import LinearSegmentedColormap
     y_pred = np.argmax(y_pred_probs, axis=1)
-    cm     = confusion_matrix(y_true, y_pred)
+    classes = config.CLASSES
+    num_classes = len(classes)
 
-    if normalize:
-        cm_plot = cm.astype(float) / (cm.sum(axis=1, keepdims=True) + 1e-8)
-        fmt = '.2f'
-    else:
-        cm_plot = cm
-        fmt = 'd'
+    # Calculate confusion matrix
+    cm = confusion_matrix(y_true, y_pred, labels=list(range(num_classes)))
 
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(
-        cm_plot, annot=True, fmt=fmt, cmap='Blues',
-        xticklabels=config.CLASSES, yticklabels=config.CLASSES,
-        vmin=0.0, vmax=1.0 if normalize else None,
-    )
-    plt.ylabel('True Label')
-    plt.xlabel('Predicted Label')
-    plt.title('Confusion Matrix (Normalized)' if normalize else 'Confusion Matrix')
-    plt.tight_layout()
+    # Normalized version for colors
+    cm_plot = cm.astype(float) / (cm.sum(axis=1, keepdims=True) + 1e-8)
 
-    if save_path:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        plt.close()
-    else:
-        plt.show()
+    # Set dark style matching paper aesthetic
+    with plt.style.context("dark_background"):
+        fig, ax = plt.subplots(figsize=(11, 9), facecolor="#0d0d0d")
+        ax.set_facecolor("#0d0d0d")
+
+        # Premium sunset colormap: deep charcoal -> royal purple -> clinical orange -> bright gold
+        cmap = LinearSegmentedColormap.from_list(
+            "premium_cm",
+            ["#18181b", "#3b0764", "#701a75", "#db2777", "#ea580c", "#eab308"],
+            N=256
+        )
+
+        # Draw the heatmap with grid lines between boxes to give a modern card-like look
+        sns.heatmap(
+            cm_plot,
+            annot=False,  # Custom annotations drawn below
+            cmap=cmap,
+            vmin=0.0,
+            vmax=1.0,
+            xticklabels=[c.upper() for c in classes],
+            yticklabels=[c.upper() for c in classes],
+            square=True,
+            cbar=True,
+            linewidths=1.5,
+            linecolor="#0d0d0d",
+            ax=ax,
+            cbar_kws={"shrink": 0.8, "label": "Classification Probability"}
+        )
+
+        # Custom cell text: write BOTH normalized probability AND raw count in each cell
+        for i in range(num_classes):
+            for j in range(num_classes):
+                val_pct = cm_plot[i, j]
+                val_raw = cm[i, j]
+
+                # Highlight diagonal text differently from off-diagonal
+                is_diagonal = (i == j)
+                color = "#ffffff" if val_pct > 0.4 else "#94a3b8"
+                weight = "bold" if is_diagonal else "normal"
+
+                if val_raw > 0:
+                    text_str = f"{val_pct:.2f}\n(n={val_raw})"
+                else:
+                    text_str = "0.00"
+
+                ax.text(
+                    j + 0.5, i + 0.5, text_str,
+                    ha="center", va="center",
+                    color=color, fontsize=9, fontweight=weight
+                )
+
+        # Style titles and axis labels
+        ax.set_title("CONFUSION MATRIX (NORMALIZED)", color="#ffec5c", fontsize=13, fontweight="bold", pad=20)
+        ax.set_ylabel("TRUE DIAGNOSIS", color="#94a3b8", fontsize=10, fontweight="semibold", labelpad=15)
+        ax.set_xlabel("PREDICTED DIAGNOSIS", color="#94a3b8", fontsize=10, fontweight="semibold", labelpad=15)
+
+        # Rotate labels for clean look
+        plt.xticks(rotation=45, ha="right", color="#e2e8f0", fontsize=9)
+        plt.yticks(rotation=0, color="#e2e8f0", fontsize=9)
+
+        # Clean grid outline
+        for spine in ax.spines.values():
+            spine.set_color("#333333")
+            spine.set_linewidth(1.0)
+
+        plt.tight_layout()
+
+        if save_path:
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            plt.savefig(save_path, dpi=180, bbox_inches='tight', facecolor='#0d0d0d')
+            plt.close()
+        else:
+            plt.show()
 
 
 # =========================================================================== #
