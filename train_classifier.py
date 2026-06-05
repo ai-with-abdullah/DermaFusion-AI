@@ -662,6 +662,12 @@ def main():
         torch.save(ckpt, resume_path)
         logger.info(f"[CHECKPOINT] Saved epoch {epoch} → {resume_path}")
 
+        # Explicitly collect garbage and clear CUDA cache to prevent RAM/VRAM leak
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         if early_stopping.early_stop:
             logger.info("Early stopping triggered.")
             break
