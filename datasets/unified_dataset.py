@@ -107,7 +107,7 @@ class UnifiedSkinDataset(Dataset):
         if rec.mask_path and os.path.exists(rec.mask_path):
             mask = cv2.imread(rec.mask_path, cv2.IMREAD_GRAYSCALE)
         if mask is None:
-            mask = np.zeros(image.shape[:2], dtype=np.uint8)
+            mask = np.zeros(image.shape[:2], dtype=np.float32)
         else:
             mask = (mask > 127).astype(np.float32)
 
