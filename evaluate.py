@@ -67,10 +67,21 @@ def plot_multiclass_roc(y_true, y_pred_probs, save_path):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="DermaFusion Evaluation")
+    parser.add_argument("--ablation", type=str, default=None,
+                        choices=["no_tta", "convnext_only", "eva_only", "no_attention", "no_segmentation"],
+                        help="Ablation model to evaluate")
+    args = parser.parse_args()
+    ablation = args.ablation
+
     seed_everything(config.SEED)
     config.setup_dirs()
-    logger = setup_logger("evaluate", os.path.join(config.OUTPUT_DIR, "evaluate_dual_branch.log"))
+    log_name = f"evaluate_{ablation}.log" if ablation else "evaluate_dual_branch.log"
+    logger = setup_logger("evaluate", os.path.join(config.OUTPUT_DIR, log_name))
     logger.info("Starting Dual-Branch Fusion Evaluation (TTA enabled)")
+    if ablation:
+        logger.info(f"  Active Ablation:        {ablation}")
 
     # ── Dataloaders ──────────────────────────────────────────────────────── #
     _, _, test_loader, _ = get_unified_dataloaders(
@@ -104,7 +115,8 @@ def main():
         dropout=config.FUSION_DROPOUT,
     ).to(config.DEVICE)
 
-    model_path = os.path.join(config.WEIGHTS_DIR, "best_dual_branch_fusion.pth")
+    best_filename = f"best_classifier_{ablation}.pth" if ablation else "best_dual_branch_fusion.pth"
+    model_path = os.path.join(config.WEIGHTS_DIR, best_filename)
     if os.path.exists(model_path):
         model.load_state_dict(torch.load(model_path, map_location=config.DEVICE,
                                           weights_only=True))
@@ -114,9 +126,12 @@ def main():
 
 
     # ── TTA Inference ─────────────────────────────────────────────────────── #
-    n_views = config.TTA_N_VIEWS if config.USE_TTA else 1
+    if ablation == "no_tta":
+        n_views = 1
+    else:
+        n_views = config.TTA_N_VIEWS if config.USE_TTA else 1
     logger.info(f"Running inference with TTA (n_views={n_views})...")
-    tta_engine = TTAInference(model, unet, config.DEVICE, n_views=n_views)
+    tta_engine = TTAInference(model, unet, config.DEVICE, n_views=n_views, ablation=ablation)
 
     # FIXED (Bug #4): TTAInference.predict_batch() already averages post-softmax
     # probabilities internally — the returned array is *probabilities*, not raw logits.
@@ -215,14 +230,16 @@ def main():
         break  # only first batch for XAI
 
     logger.info("Generating confusion matrix and ROC curves...")
-    cm_path = os.path.join(config.PLOTS_DIR, "confusion_matrix_dual_branch.png")
-    roc_path = os.path.join(config.PLOTS_DIR, "roc_curve_dual_branch.png")
+    cm_name = f"confusion_matrix_{ablation}.png" if ablation else "confusion_matrix_dual_branch.png"
+    roc_name = f"roc_curve_{ablation}.png" if ablation else "roc_curve_dual_branch.png"
+    cm_path = os.path.join(config.PLOTS_DIR, cm_name)
+    roc_path = os.path.join(config.PLOTS_DIR, roc_name)
     
     plot_confusion_matrix(
         y_true, y_pred_probs_calibrated,
         save_path=cm_path,
         normalize=True,
-        title="CONFUSION MATRIX (COMBINED)",
+        title=f"CONFUSION MATRIX ({ablation.upper() if ablation else 'COMBINED'})",
     )
     plot_multiclass_roc(
         y_true, y_pred_probs_calibrated,
@@ -240,33 +257,33 @@ def main():
             y_true_ds = y_true[idx]
             y_pred_probs_ds = y_pred_probs_calibrated[idx]
             
-            ds_filename = f"confusion_matrix_{dataset.lower()}.png"
+            ds_filename = f"confusion_matrix_{dataset.lower()}_{ablation}.png" if ablation else f"confusion_matrix_{dataset.lower()}.png"
             plot_confusion_matrix(
                 y_true_ds, y_pred_probs_ds,
                 save_path=os.path.join(config.PLOTS_DIR, ds_filename),
                 normalize=True,
-                title=f"CONFUSION MATRIX ({dataset.upper()})",
+                title=f"CONFUSION MATRIX ({dataset.upper()} - {ablation.upper() if ablation else 'FULL MODEL'})",
             )
             logger.info(f"Saved separate confusion matrix for {dataset} to {ds_filename}")
 
-    # ── Run Ablation Study ────────────────────────────────────────────────── #
-    logger.info("Starting Ablation Study execution...")
-    ablation_path = os.path.join(config.PLOTS_DIR, "ablation_study_bar.png")
-    try:
-        from evaluation.run_ablation_study import main as run_ablations
-        run_ablations()
-        logger.info("Ablation Study executed successfully.")
-    except Exception as e:
-        logger.error(f"Ablation Study failed: {e}")
+    # ── Run Ablation Study & Dashboard (Only when evaluating Full Model) ──── #
+    if ablation is None:
+        logger.info("Starting Ablation Study execution...")
+        ablation_path = os.path.join(config.PLOTS_DIR, "ablation_study_bar.png")
+        try:
+            from evaluation.run_ablation_study import main as run_ablations
+            run_ablations()
+            logger.info("Ablation Study executed successfully.")
+        except Exception as e:
+            logger.error(f"Ablation Study failed: {e}")
 
-    # ── Generate Combined Dashboard ────────────────────────────────────────── #
-    dashboard_path = os.path.join(config.PLOTS_DIR, "evaluation_dashboard.png")
-    logger.info(f"Generating combined evaluation dashboard → {dashboard_path}...")
-    try:
-        generate_combined_dashboard(cm_path, roc_path, ablation_path, dashboard_path)
-        logger.info("Combined evaluation dashboard generated successfully.")
-    except Exception as e:
-        logger.error(f"Failed to generate dashboard: {e}")
+        dashboard_path = os.path.join(config.PLOTS_DIR, "evaluation_dashboard.png")
+        logger.info(f"Generating combined evaluation dashboard → {dashboard_path}...")
+        try:
+            generate_combined_dashboard(cm_path, roc_path, ablation_path, dashboard_path)
+            logger.info("Combined evaluation dashboard generated successfully.")
+        except Exception as e:
+            logger.error(f"Failed to generate dashboard: {e}")
 
     # ── Mel Threshold Boost — DIAGNOSTIC ONLY ────────────────────────────── #
     # IMPORTANT: This boost is strictly for logging a supplementary sensitivity

@@ -78,13 +78,15 @@ class TTAInference:
         unet:     Segmentation model (for generating ConvNeXt branch input)
         device:   'cuda' | 'cpu'
         n_views:  Number of TTA views (1 = no TTA, 5 = full TTA)
+        ablation: Optional name of ablation configuration to run
     """
 
-    def __init__(self, model, unet, device: str, n_views: int = 8):
+    def __init__(self, model, unet, device: str, n_views: int = 8, ablation: str = None):
         self.model   = model
         self.unet    = unet
         self.device  = device
         self.n_views = n_views
+        self.ablation = ablation
 
         self.model.eval()
         self.unet.eval()
@@ -108,10 +110,40 @@ class TTAInference:
 
             # Generate segmentation mask for augmented image
             with torch.amp.autocast('cuda', enabled=(self.device == 'cuda')):
-                mask_logits = self.unet(aug_images)
-                images_seg  = apply_mask(aug_images, mask_logits)
-
-                logits, _ = self.model(aug_images, images_seg)
+                raw_m = self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
+                
+                if self.ablation == "convnext_only":
+                    mask_logits = self.unet(aug_images)
+                    images_seg  = apply_mask(aug_images, mask_logits)
+                    feat_conv = raw_m.branch_conv(images_seg)
+                    feat_conv = raw_m.proj_conv(feat_conv)
+                    logits = raw_m.classifier(feat_conv)
+                elif self.ablation == "eva_only":
+                    feat_eva = raw_m.branch_eva(aug_images)
+                    feat_eva = raw_m.proj_eva(feat_eva)
+                    logits = raw_m.classifier(feat_eva)
+                elif self.ablation == "no_attention":
+                    mask_logits = self.unet(aug_images)
+                    images_seg  = apply_mask(aug_images, mask_logits)
+                    feat_eva = raw_m.branch_eva(aug_images)
+                    feat_eva = raw_m.proj_eva(feat_eva)
+                    feat_conv = raw_m.branch_conv(images_seg)
+                    feat_conv = raw_m.proj_conv(feat_conv)
+                    fused = (feat_eva + feat_conv) / 2.0
+                    combined = raw_m.gate(fused, feat_eva, feat_conv)
+                    logits = raw_m.classifier(combined)
+                elif self.ablation == "no_segmentation":
+                    feat_eva = raw_m.branch_eva(aug_images)
+                    feat_eva = raw_m.proj_eva(feat_eva)
+                    feat_conv = raw_m.branch_conv(aug_images)
+                    feat_conv = raw_m.proj_conv(feat_conv)
+                    fused, _ = raw_m.fusion(feat_eva, feat_conv)
+                    combined = raw_m.gate(fused, feat_eva, feat_conv)
+                    logits = raw_m.classifier(combined)
+                else: # Full Model / no_tta
+                    mask_logits = self.unet(aug_images)
+                    images_seg  = apply_mask(aug_images, mask_logits)
+                    logits, _ = self.model(aug_images, images_seg)
 
             probs = torch.softmax(logits, dim=1).cpu().float().numpy()  # (B, C)
             all_probs.append(probs)

@@ -151,7 +151,7 @@ class WarmupCosineScheduler:
 #                        TRAINING LOOP                                         #
 # =========================================================================== #
 
-def train_one_epoch(model, ema, unet, loader, criterion, optimizer, scaler, device, accumulation_steps=1):
+def train_one_epoch(model, ema, unet, loader, criterion, optimizer, scaler, device, accumulation_steps=1, ablation=None):
     model.train()
     unet.eval()
 
@@ -209,7 +209,35 @@ def train_one_epoch(model, ema, unet, loader, criterion, optimizer, scaler, devi
 
         # ── Forward pass ────────────────────────────────────────────────── #
         with autocast('cuda', enabled=(device == 'cuda')):
-            logits, _ = model(images, images_seg)
+            # Unwrap DataParallel if wrapped
+            raw_m = model.module if isinstance(model, torch.nn.DataParallel) else model
+            
+            if ablation == "convnext_only":
+                feat_conv = raw_m.branch_conv(images_seg)
+                feat_conv = raw_m.proj_conv(feat_conv)
+                logits = raw_m.classifier(feat_conv)
+            elif ablation == "eva_only":
+                feat_eva = raw_m.branch_eva(images)
+                feat_eva = raw_m.proj_eva(feat_eva)
+                logits = raw_m.classifier(feat_eva)
+            elif ablation == "no_attention":
+                feat_eva = raw_m.branch_eva(images)
+                feat_eva = raw_m.proj_eva(feat_eva)
+                feat_conv = raw_m.branch_conv(images_seg)
+                feat_conv = raw_m.proj_conv(feat_conv)
+                fused = (feat_eva + feat_conv) / 2.0
+                combined = raw_m.gate(fused, feat_eva, feat_conv)
+                logits = raw_m.classifier(combined)
+            elif ablation == "no_segmentation":
+                feat_eva = raw_m.branch_eva(images)
+                feat_eva = raw_m.proj_eva(feat_eva)
+                feat_conv = raw_m.branch_conv(images) # original images passed to ConvNeXt
+                feat_conv = raw_m.proj_conv(feat_conv)
+                fused, _ = raw_m.fusion(feat_eva, feat_conv)
+                combined = raw_m.gate(fused, feat_eva, feat_conv)
+                logits = raw_m.classifier(combined)
+            else: # Full Model / no_tta
+                logits, _ = model(images, images_seg)
 
             if mix_fn is not None:
                 loss = mix_fn(logits)
@@ -250,7 +278,7 @@ def train_one_epoch(model, ema, unet, loader, criterion, optimizer, scaler, devi
     return losses.avg, metrics
 
 
-def validate(model, unet, loader, criterion, device):
+def validate(model, unet, loader, criterion, device, ablation=None):
     model.eval()
     unet.eval()
 
@@ -265,9 +293,42 @@ def validate(model, unet, loader, criterion, device):
             labels = batch['label'].to(device)
 
             with autocast('cuda', enabled=(device == 'cuda')):
-                mask_logits = unet(images)
-                images_seg  = apply_mask(images, mask_logits)
-                logits, _   = model(images, images_seg)
+                # Unwrap DataParallel if wrapped
+                raw_m = model.module if isinstance(model, torch.nn.DataParallel) else model
+                
+                if ablation == "convnext_only":
+                    mask_logits = unet(images)
+                    images_seg = apply_mask(images, mask_logits)
+                    feat_conv = raw_m.branch_conv(images_seg)
+                    feat_conv = raw_m.proj_conv(feat_conv)
+                    logits = raw_m.classifier(feat_conv)
+                elif ablation == "eva_only":
+                    feat_eva = raw_m.branch_eva(images)
+                    feat_eva = raw_m.proj_eva(feat_eva)
+                    logits = raw_m.classifier(feat_eva)
+                elif ablation == "no_attention":
+                    mask_logits = unet(images)
+                    images_seg = apply_mask(images, mask_logits)
+                    feat_eva = raw_m.branch_eva(images)
+                    feat_eva = raw_m.proj_eva(feat_eva)
+                    feat_conv = raw_m.branch_conv(images_seg)
+                    feat_conv = raw_m.proj_conv(feat_conv)
+                    fused = (feat_eva + feat_conv) / 2.0
+                    combined = raw_m.gate(fused, feat_eva, feat_conv)
+                    logits = raw_m.classifier(combined)
+                elif ablation == "no_segmentation":
+                    feat_eva = raw_m.branch_eva(images)
+                    feat_eva = raw_m.proj_eva(feat_eva)
+                    feat_conv = raw_m.branch_conv(images) # original images passed to ConvNeXt
+                    feat_conv = raw_m.proj_conv(feat_conv)
+                    fused, _ = raw_m.fusion(feat_eva, feat_conv)
+                    combined = raw_m.gate(fused, feat_eva, feat_conv)
+                    logits = raw_m.classifier(combined)
+                else: # Full Model / no_tta
+                    mask_logits = unet(images)
+                    images_seg  = apply_mask(images, mask_logits)
+                    logits, _   = model(images, images_seg)
+                    
                 loss        = criterion(logits, labels)
 
             losses.update(loss.item(), images.size(0))
@@ -287,12 +348,23 @@ def validate(model, unet, loader, criterion, device):
 # =========================================================================== #
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="DermaFusion Training")
+    parser.add_argument("--ablation", type=str, default=None,
+                        choices=["no_tta", "convnext_only", "eva_only", "no_attention", "no_segmentation"],
+                        help="Ablation configuration to train")
+    args = parser.parse_args()
+    ablation = args.ablation
+
     seed_everything(config.SEED)
     config.setup_dirs()
 
-    logger = setup_logger("train_class", os.path.join(config.OUTPUT_DIR, "train_dual_branch.log"))
+    log_name = f"train_dual_branch_{ablation}.log" if ablation else "train_dual_branch.log"
+    logger = setup_logger("train_class", os.path.join(config.OUTPUT_DIR, log_name))
     logger.info("=" * 70)
     logger.info("Starting Dual-Branch Fusion Classifier Training — 2026 SOTA Upgrade")
+    if ablation:
+        logger.info(f"  Active Ablation:        {ablation}")
     logger.info(f"  Branch A: EVA-02        → {config.EVA02_BACKBONE}")
     logger.info(f"  Branch B: ConvNeXt V2   → {config.CONVNEXT_BACKBONE}")
     logger.info(f"  Multi-dataset:          {config.USE_MULTI_DATASET}")
@@ -487,14 +559,21 @@ def main():
 
     scaler = GradScaler('cuda', enabled=(config.DEVICE == 'cuda'))
 
-    best_model_path = os.path.join(config.WEIGHTS_DIR, "best_dual_branch_fusion.pth")
+    if ablation:
+        best_filename = f"best_classifier_{ablation}.pth"
+        resume_filename = f"resume_checkpoint_{ablation}.pth"
+    else:
+        best_filename = "best_dual_branch_fusion.pth"
+        resume_filename = "resume_checkpoint.pth"
+
+    best_model_path = os.path.join(config.WEIGHTS_DIR, best_filename)
     early_stopping  = EarlyStopping(
         patience=15,   # increased; balanced_acc is the metric now
         verbose=True, path=best_model_path, trace_func=logger.info
     )
 
     # ── Checkpoint resume: load if exists ─────────────────────────────── #
-    resume_path = os.path.join(config.WEIGHTS_DIR, "resume_checkpoint.pth")
+    resume_path = os.path.join(config.WEIGHTS_DIR, resume_filename)
     start_epoch = 1
     history = []
     if os.path.exists(resume_path):
@@ -526,13 +605,13 @@ def main():
 
         train_loss, train_metrics = train_one_epoch(
             model, ema, unet, train_loader, criterion, optimizer, scaler,
-            config.DEVICE, config.GRADIENT_ACCUMULATION_STEPS
+            config.DEVICE, config.GRADIENT_ACCUMULATION_STEPS, ablation=ablation
         )
 
         # Validate using EMA weights for stability, then RESTORE training weights
         if ema is not None:
             ema.apply_shadow(model)          # swap in EMA weights
-        val_loss, val_metrics = validate(model, unet, val_loader, criterion, config.DEVICE)
+        val_loss, val_metrics = validate(model, unet, val_loader, criterion, config.DEVICE, ablation=ablation)
         if ema is not None:
             ema.restore(model)               # restore real training weights!
 
@@ -580,8 +659,9 @@ def main():
             logger.info("Early stopping triggered.")
             break
 
+    history_name = f"training_history_{ablation}.csv" if ablation else "training_history_dual_branch.csv"
     pd.DataFrame(history).to_csv(
-        os.path.join(config.OUTPUT_DIR, "training_history_dual_branch.csv"), index=False
+        os.path.join(config.OUTPUT_DIR, history_name), index=False
     )
     logger.info("Dual-Branch Fusion Classifier Training Completed.")
 
