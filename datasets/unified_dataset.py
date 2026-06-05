@@ -277,22 +277,15 @@ def _parse_isic2019(data_dir: str) -> List[SkinLesionRecord]:
     flat_dir = os.path.join(base, 'ISIC_2019_Training_Input')
     use_per_class = len(class_folders) > 0
 
-    # Build all possible image search dirs — handle Kaggle's andrewmvd/isic-2019 layout
-    # which may nest images under subfolders. Collect ALL subdirs inside base.
+    # Build all possible image search dirs — collect base and all its subdirectories recursively
     all_search_dirs = []
-    if os.path.exists(flat_dir):
-        all_search_dirs.append(flat_dir)
-    if use_per_class:
-        all_search_dirs += list(class_folders.values())
-    # Also scan any other subdirectory directly inside base (Kaggle variant layouts)
     if os.path.exists(base):
-        for sub in os.listdir(base):
-            sub_path = os.path.join(base, sub)
-            if os.path.isdir(sub_path) and sub_path not in all_search_dirs:
-                all_search_dirs.append(sub_path)
-        # Also search base itself in case of flat layout
-        if base not in all_search_dirs:
-            all_search_dirs.append(base)
+        all_search_dirs.append(base)
+        for root, dirs, _ in os.walk(base):
+            for d in dirs:
+                sub_path = os.path.join(root, d)
+                if sub_path not in all_search_dirs:
+                    all_search_dirs.append(sub_path)
 
     print(f"  [DEBUG ISIC 2019] base: {base}")
     if os.path.exists(base):
@@ -300,6 +293,7 @@ def _parse_isic2019(data_dir: str) -> List[SkinLesionRecord]:
         # Check subdirectories contents if any
         for d in all_search_dirs:
             if d != base and os.path.exists(d):
+                # Print only direct name to keep logs clean
                 print(f"  [DEBUG ISIC 2019] subdirectory {os.path.basename(d)} contents: {os.listdir(d)[:5]}")
     else:
         print("  [DEBUG ISIC 2019] base directory does not exist")
