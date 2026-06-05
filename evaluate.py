@@ -215,15 +215,58 @@ def main():
         break  # only first batch for XAI
 
     logger.info("Generating confusion matrix and ROC curves...")
+    cm_path = os.path.join(config.PLOTS_DIR, "confusion_matrix_dual_branch.png")
+    roc_path = os.path.join(config.PLOTS_DIR, "roc_curve_dual_branch.png")
+    
     plot_confusion_matrix(
         y_true, y_pred_probs_calibrated,
-        save_path=os.path.join(config.PLOTS_DIR, "confusion_matrix_dual_branch.png"),
+        save_path=cm_path,
         normalize=True,
+        title="CONFUSION MATRIX (COMBINED)",
     )
     plot_multiclass_roc(
         y_true, y_pred_probs_calibrated,
-        save_path=os.path.join(config.PLOTS_DIR, "roc_curve_dual_branch.png"),
+        save_path=roc_path,
     )
+
+    # ── Separate Confusion Matrices per Dataset ───────────────────────────── #
+    if dataset_names is not None and len(dataset_names) > 0:
+        logger.info("Generating separate confusion matrices for each dataset...")
+        unique_datasets = sorted(list(set(dataset_names)))
+        for dataset in unique_datasets:
+            idx = [i for i, name in enumerate(dataset_names) if name == dataset]
+            if len(idx) == 0:
+                continue
+            y_true_ds = y_true[idx]
+            y_pred_probs_ds = y_pred_probs_calibrated[idx]
+            
+            ds_filename = f"confusion_matrix_{dataset.lower()}.png"
+            plot_confusion_matrix(
+                y_true_ds, y_pred_probs_ds,
+                save_path=os.path.join(config.PLOTS_DIR, ds_filename),
+                normalize=True,
+                title=f"CONFUSION MATRIX ({dataset.upper()})",
+            )
+            logger.info(f"Saved separate confusion matrix for {dataset} to {ds_filename}")
+
+    # ── Run Ablation Study ────────────────────────────────────────────────── #
+    logger.info("Starting Ablation Study execution...")
+    ablation_path = os.path.join(config.PLOTS_DIR, "ablation_study_bar.png")
+    try:
+        from evaluation.run_ablation_study import main as run_ablations
+        run_ablations()
+        logger.info("Ablation Study executed successfully.")
+    except Exception as e:
+        logger.error(f"Ablation Study failed: {e}")
+
+    # ── Generate Combined Dashboard ────────────────────────────────────────── #
+    dashboard_path = os.path.join(config.PLOTS_DIR, "evaluation_dashboard.png")
+    logger.info(f"Generating combined evaluation dashboard → {dashboard_path}...")
+    try:
+        generate_combined_dashboard(cm_path, roc_path, ablation_path, dashboard_path)
+        logger.info("Combined evaluation dashboard generated successfully.")
+    except Exception as e:
+        logger.error(f"Failed to generate dashboard: {e}")
 
     # ── Mel Threshold Boost — DIAGNOSTIC ONLY ────────────────────────────── #
     # IMPORTANT: This boost is strictly for logging a supplementary sensitivity
@@ -243,6 +286,52 @@ def main():
     )
 
     logger.info(f"Evaluation complete. Outputs saved → {config.OUTPUT_DIR}")
+
+
+def generate_combined_dashboard(cm_path, roc_path, ablation_path, save_path):
+    """Combines individual plots into a premium multi-panel dashboard image."""
+    import cv2
+    if not (os.path.exists(cm_path) and os.path.exists(roc_path) and os.path.exists(ablation_path)):
+        raise FileNotFoundError("One or more input images for dashboard are missing.")
+    
+    # Load images
+    img_cm = cv2.imread(cm_path)
+    img_roc = cv2.imread(roc_path)
+    img_ablation = cv2.imread(ablation_path)
+    
+    # Convert BGR to RGB
+    img_cm = cv2.cvtColor(img_cm, cv2.COLOR_BGR2RGB)
+    img_roc = cv2.cvtColor(img_roc, cv2.COLOR_BGR2RGB)
+    img_ablation = cv2.cvtColor(img_ablation, cv2.COLOR_BGR2RGB)
+    
+    # Create 3-panel figure:
+    # Top row: Confusion Matrix and ROC curve side-by-side
+    # Bottom row: Ablation Study stretched across the bottom
+    with plt.style.context("dark_background"):
+        fig = plt.figure(figsize=(20, 16), facecolor="#0d0d0d")
+        
+        # Grid specification: 2 rows, 2 columns
+        gs = fig.add_gridspec(2, 2, height_ratios=[1, 0.85], hspace=0.12, wspace=0.06)
+        
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax1.imshow(img_cm)
+        ax1.axis('off')
+        ax1.set_title("CONFUSION MATRIX", color='#ffec5c', fontsize=12, fontweight="bold", pad=8)
+        
+        ax2 = fig.add_subplot(gs[0, 1])
+        ax2.imshow(img_roc)
+        ax2.axis('off')
+        ax2.set_title("ROC CURVES", color='#ffec5c', fontsize=12, fontweight="bold", pad=8)
+        
+        ax3 = fig.add_subplot(gs[1, :])
+        ax3.imshow(img_ablation)
+        ax3.axis('off')
+        ax3.set_title("MODEL ABLATION SYSTEM STUDY", color='#ffec5c', fontsize=12, fontweight="bold", pad=8)
+        
+        plt.suptitle("DERMA-FUSION SYSTEM EVALUATION DASHBOARD", color='#ffffff', fontsize=18, fontweight="bold", y=0.96)
+        
+        plt.savefig(save_path, dpi=180, bbox_inches='tight', facecolor='#0d0d0d')
+        plt.close()
 
 
 if __name__ == "__main__":

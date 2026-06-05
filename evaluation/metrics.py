@@ -244,6 +244,7 @@ def plot_confusion_matrix(
     y_pred_probs: np.ndarray,
     save_path: str = None,
     normalize: bool = True,
+    title: str = "CONFUSION MATRIX (NORMALIZED)",
 ) -> None:
     """Plots and optionally saves a normalized confusion matrix with premium dark-mode styling."""
     from matplotlib.colors import LinearSegmentedColormap
@@ -303,13 +304,13 @@ def plot_confusion_matrix(
                     text_str = "0.00"
 
                 ax.text(
-                    j + 0.5, i + 0.5, text_str,
-                    ha="center", va="center",
-                    color=color, fontsize=9, fontweight=weight
+                     j + 0.5, i + 0.5, text_str,
+                     ha="center", va="center",
+                     color=color, fontsize=9, fontweight=weight
                 )
 
         # Style titles and axis labels
-        ax.set_title("CONFUSION MATRIX (NORMALIZED)", color="#ffec5c", fontsize=13, fontweight="bold", pad=20)
+        ax.set_title(title, color="#ffec5c", fontsize=13, fontweight="bold", pad=20)
         ax.set_ylabel("TRUE DIAGNOSIS", color="#94a3b8", fontsize=10, fontweight="semibold", labelpad=15)
         ax.set_xlabel("PREDICTED DIAGNOSIS", color="#94a3b8", fontsize=10, fontweight="semibold", labelpad=15)
 
