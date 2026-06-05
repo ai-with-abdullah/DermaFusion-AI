@@ -170,6 +170,7 @@ def _parse_ham10000(data_dir: str, masks_dir: Optional[str] = None) -> List[Skin
             break
 
     if df is None:
+        print(f"  [DEBUG HAM10000] metadata CSV not found! Candidates checked: {csv_candidates}")
         return records
 
     # Image directories — search flat dir, then part_1/part_2 subdirs (Kaggle layout)
@@ -186,6 +187,7 @@ def _parse_ham10000(data_dir: str, masks_dir: Optional[str] = None) -> List[Skin
             img_dirs.append(candidate)
 
     if not img_dirs:
+        print(f"  [DEBUG HAM10000] no image directories found! checked paths under ham_root: {ham_root}")
         return records
 
     def _find_image(image_id: str) -> Optional[str]:
@@ -288,6 +290,20 @@ def _parse_isic2019(data_dir: str) -> List[SkinLesionRecord]:
             sub_path = os.path.join(base, sub)
             if os.path.isdir(sub_path) and sub_path not in all_search_dirs:
                 all_search_dirs.append(sub_path)
+        # Also search base itself in case of flat layout
+        if base not in all_search_dirs:
+            all_search_dirs.append(base)
+
+    print(f"  [DEBUG ISIC 2019] base: {base}")
+    if os.path.exists(base):
+        print(f"  [DEBUG ISIC 2019] base contents: {os.listdir(base)[:15]}")
+        # Check subdirectories contents if any
+        for d in all_search_dirs:
+            if d != base and os.path.exists(d):
+                print(f"  [DEBUG ISIC 2019] subdirectory {os.path.basename(d)} contents: {os.listdir(d)[:5]}")
+    else:
+        print("  [DEBUG ISIC 2019] base directory does not exist")
+    print(f"  [DEBUG ISIC 2019] all_search_dirs: {all_search_dirs}")
 
     if not all_search_dirs:
         return records   # no image source found
