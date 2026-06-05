@@ -633,7 +633,7 @@ def _patient_aware_split(
     Splits records into train/val/test ensuring no patient appears in two splits.
     Falls back to stratified split if patient IDs are all unique (ISIC 2020/2024).
     """
-    patient_ids = [r.patient_id for r in records]
+    patient_ids = [f"{r.dataset_name}_{r.patient_id}" for r in records]
     labels      = [r.label_idx  for r in records]
 
     unique_patients = list(set(patient_ids))
