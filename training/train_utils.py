@@ -59,14 +59,20 @@ class ModelEMA:
         for name, param in model.named_parameters():
             if param.requires_grad:
                 assert name in self.shadow, f"EMA: unexpected param '{name}' — was model changed after register()?"
-                new_average = (1.0 - d) * param.data + d * self.shadow[name]
-                self.shadow[name] = new_average.clone()
+                shadow_device = self.shadow[name].device
+                param_device  = param.device
+                shadow_val    = self.shadow[name].to(param_device, non_blocking=True)
+                new_average   = (1.0 - d) * param.data + d * shadow_val
+                self.shadow[name] = new_average.to(shadow_device, non_blocking=True).clone()
         for name, buf in model.named_buffers():
             if buf is not None:
                 key = f'__buf__{name}'
                 if key in self.shadow:
-                    new_average = (1.0 - d) * buf.data + d * self.shadow[key]
-                    self.shadow[key] = new_average.clone()
+                    shadow_device = self.shadow[key].device
+                    buf_device    = buf.device
+                    shadow_val    = self.shadow[key].to(buf_device, non_blocking=True)
+                    new_average   = (1.0 - d) * buf.data + d * shadow_val
+                    self.shadow[key] = new_average.to(shadow_device, non_blocking=True).clone()
 
     def apply_shadow(self, model):
         """Swap in EMA weights+buffers for validation. Call restore() after."""
