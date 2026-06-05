@@ -54,6 +54,9 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
         
         pbar.set_postfix({"Loss": f"{losses.avg:.4f}", "Dice": f"{dice_scores.avg:.4f}"})
         
+        # Explicit memory cleanup to prevent accumulation
+        del batch, images, masks, logits, loss
+        
     return losses.avg, dice_scores.avg
 
 def validate(model, loader, criterion, device):
@@ -79,6 +82,9 @@ def validate(model, loader, criterion, device):
             dice_scores.update(dice, images.size(0))
             
             pbar.set_postfix({"Loss": f"{losses.avg:.4f}", "Dice": f"{dice_scores.avg:.4f}"})
+            
+            # Explicit memory cleanup to prevent accumulation
+            del batch, images, masks, logits, loss
             
     return losses.avg, dice_scores.avg
 

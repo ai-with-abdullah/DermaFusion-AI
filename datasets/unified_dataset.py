@@ -84,17 +84,24 @@ class UnifiedSkinDataset(Dataset):
     CLASS_TO_IDX: Dict[str, int] = {c: i for i, c in enumerate(config.CLASSES)}
 
     def __init__(self, records: List[SkinLesionRecord], transforms=None):
-        self.records    = records
+        self.image_paths = [r.image_path for r in records]
+        self.mask_paths  = [r.mask_path or "" for r in records]
+        self.labels      = np.array([r.label_idx for r in records], dtype=np.int32)
+        self.patient_ids = [r.patient_id for r in records]
+        self.dataset_names = [r.dataset_name for r in records]
         self.transforms = transforms
 
     def __len__(self) -> int:
-        return len(self.records)
+        return len(self.image_paths)
 
     def __getitem__(self, idx: int) -> dict:
-        rec = self.records[idx]
+        img_path = self.image_paths[idx]
+        mask_path = self.mask_paths[idx]
+        label_idx = int(self.labels[idx])
+        dataset_name = self.dataset_names[idx]
 
         # ── Load image ─────────────────────────────────────────────────────── #
-        image = cv2.imread(rec.image_path) if os.path.exists(rec.image_path) else None
+        image = cv2.imread(img_path) if os.path.exists(img_path) else None
         if image is None:
             image = np.zeros(
                 (config.IMAGE_SIZE, config.IMAGE_SIZE, 3), dtype=np.uint8
@@ -104,8 +111,8 @@ class UnifiedSkinDataset(Dataset):
 
         # ── Load mask (optional) ────────────────────────────────────────────── #
         mask = None
-        if rec.mask_path and os.path.exists(rec.mask_path):
-            mask = cv2.imread(rec.mask_path, cv2.IMREAD_GRAYSCALE)
+        if mask_path and os.path.exists(mask_path):
+            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
         if mask is None:
             mask = np.zeros(image.shape[:2], dtype=np.float32)
         else:
@@ -120,9 +127,9 @@ class UnifiedSkinDataset(Dataset):
         return {
             'image':        image,
             'mask':         mask,
-            'label':        rec.label_idx,
-            'image_id':     os.path.splitext(os.path.basename(rec.image_path))[0],
-            'dataset_name': rec.dataset_name,
+            'label':        label_idx,
+            'image_id':     os.path.splitext(os.path.basename(img_path))[0],
+            'dataset_name': dataset_name,
         }
 
 
@@ -780,15 +787,18 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
     train_loader = DataLoader(
         train_ds, batch_size=batch_size,
         sampler=sampler,
-        num_workers=config.NUM_WORKERS, pin_memory=True, drop_last=True
+        num_workers=config.NUM_WORKERS, pin_memory=True, drop_last=True,
+        persistent_workers=(config.NUM_WORKERS > 0)
     )
     val_loader = DataLoader(
         val_ds, batch_size=val_batch, shuffle=False,
-        num_workers=config.NUM_WORKERS, pin_memory=True
+        num_workers=config.NUM_WORKERS, pin_memory=True,
+        persistent_workers=(config.NUM_WORKERS > 0)
     )
     test_loader = DataLoader(
         test_ds, batch_size=val_batch, shuffle=False,
-        num_workers=config.NUM_WORKERS, pin_memory=True
+        num_workers=config.NUM_WORKERS, pin_memory=True,
+        persistent_workers=(config.NUM_WORKERS > 0)
     )
 
     return train_loader, val_loader, test_loader, train_records
