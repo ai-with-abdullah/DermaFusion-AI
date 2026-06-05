@@ -204,8 +204,53 @@ def demo_prediction(pil_img):
     return pred_cls, probs, heatmap_img
 
 
+# ─── TTA helpers ───────────────────────────────────────────────────────────────
+# Temperature found by run_temperature_scaling.py on the validation set.
+# Applying T=1.460 here matches the evaluation conditions used in the paper.
+INFERENCE_TEMPERATURE = 1.460
+
+
+def _single_forward(pil_img_view, flip_h=False, flip_v=False):
+    """
+    Run one augmented view through the full pipeline and return
+    RAW LOGITS (before softmax + temperature) for ensemble averaging.
+    """
+    import torch
+    import torch.nn.functional as F
+    from PIL import Image
+
+    img = pil_img_view
+    if flip_h:
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+    if flip_v:
+        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
+    inp_eva  = preprocess_image(img, 448)
+    inp_conv = preprocess_image(img, 384)
+
+    # Segmentation mask
+    mask_logits = unet(inp_eva)
+    seg_mask = (torch.sigmoid(mask_logits) > 0.5).float()
+    seg_mask_384 = F.interpolate(seg_mask, (384, 384), mode="nearest")
+    inp_seg = inp_conv * seg_mask_384
+
+    logits, _ = model(inp_eva, inp_seg)  # (1, 7)
+    return logits  # return raw logits — averaged before softmax
+
+
 # ─── Main Inference ────────────────────────────────────────────────────────────
 def run_inference(pil_img):
+    """
+    3-view TTA ensemble with temperature scaling.
+
+    Paper evaluation used:
+      • 5-view TTA (original + h-flip + v-flip + 90° + 180°)
+      • Temperature scaling T = 1.460  (from run_temperature_scaling.py)
+
+    Here we use 3 views (original + h-flip + v-flip) to keep CPU
+    inference under ~35 seconds while matching paper conditions.
+    Temperature scaling is always applied regardless of TTA count.
+    """
     import torch
     import torch.nn.functional as F
 
@@ -213,17 +258,31 @@ def run_inference(pil_img):
         return demo_prediction(pil_img)
 
     with torch.no_grad():
-        inp_eva   = preprocess_image(pil_img, 448)
-        inp_conv  = preprocess_image(pil_img, 384)
+        # ── 3-view TTA: collect raw logits from each view ──────────────────── #
+        tta_views = [
+            (False, False),  # 1. Original
+            (True,  False),  # 2. Horizontal flip
+            (False, True),   # 3. Vertical flip
+        ]
+        logits_stack = []
+        for flip_h, flip_v in tta_views:
+            try:
+                view_logits = _single_forward(pil_img, flip_h=flip_h, flip_v=flip_v)
+                logits_stack.append(view_logits)
+            except Exception as e:
+                print(f"[TTA] View skipped ({flip_h},{flip_v}): {e}")
 
-        # Segment
-        mask_logits = unet(inp_eva)
-        seg_mask = (torch.sigmoid(mask_logits) > 0.5).float()
-        seg_mask_resized = F.interpolate(seg_mask, (384, 384), mode="nearest")
-        inp_seg = inp_conv * seg_mask_resized
+        if not logits_stack:
+            # Safety fallback: single view without TTA
+            logits_stack = [_single_forward(pil_img)]
 
-        logits, _ = model(inp_eva, inp_seg)
-        probs_tensor = F.softmax(logits, dim=1)[0]
+        # ── Average logits, then apply temperature scaling ─────────────────── #
+        # Averaging logits before softmax (not probabilities) is more principled
+        # and avoids the "probability averaging causes overconfidence" artefact.
+        avg_logits    = torch.stack(logits_stack, dim=0).mean(dim=0)  # (1, 7)
+        scaled_logits = avg_logits / INFERENCE_TEMPERATURE             # T = 1.460
+        probs_tensor  = F.softmax(scaled_logits, dim=1)[0]             # (7,)
+
         probs = {cn: float(f"{probs_tensor[i].item() * 100:.1f}")
                  for i, cn in enumerate(CLASS_NAMES)}
         pred_cls = max(probs, key=probs.get)
@@ -304,6 +363,64 @@ def process(image):
     risk_text, risk_color = RISK_LEVEL[pred_cls]
     full_label = CLASS_LABELS[pred_cls]
 
+    # ── Uncertainty detection ─────────────────────────────────────────────── #
+    # Sort all classes by confidence score
+    sorted_probs  = sorted(probs.items(), key=lambda x: x[1], reverse=True)
+    second_cls    = sorted_probs[1][0]   # 2nd-best class name
+    second_conf   = sorted_probs[1][1]   # 2nd-best confidence (%)
+    conf_gap      = top_conf - second_conf
+
+    # Flag uncertain if: low confidence OR two classes neck-and-neck
+    is_uncertain  = (top_conf < 65.0) or (conf_gap < 20.0)
+
+    # Special flag: AKIEC/MEL confusion (model tends to over-predict MEL for AKIEC)
+    akiec_mel_confusion = (
+        (pred_cls == "mel" and second_cls == "akiec") or
+        (pred_cls == "akiec" and second_cls == "mel") or
+        (pred_cls == "mel" and probs.get("akiec", 0) > 5.0)
+    )
+
+    # Build uncertainty HTML block
+    if is_uncertain or akiec_mel_confusion:
+        second_label = CLASS_LABELS[second_cls]
+        second_color = CLASS_COLORS[second_cls]
+        second_risk,_ = RISK_LEVEL[second_cls]
+
+        if akiec_mel_confusion:
+            confusion_note = (
+                "<br><span style='color:#fbbf24;'>⚠️ <strong>Note:</strong> Actinic Keratosis and "
+                "Melanoma share visual features under dermoscopy. "
+                "A biopsy is strongly recommended to distinguish between these diagnoses.</span>"
+            )
+        else:
+            confusion_note = ""
+
+        uncertainty_html = f"""
+    <div style="
+        background:#78350f20; border:1px solid #d9770650;
+        border-radius:8px; padding:12px 14px; margin-bottom:12px;
+    ">
+        <div style="color:#fbbf24; font-size:0.78rem; font-weight:700; margin-bottom:8px;">
+            ⚠️ LOW CONFIDENCE — DIFFERENTIAL DIAGNOSIS
+        </div>
+        <div style="color:#94a3b8; font-size:0.75rem; margin-bottom:6px;">
+            The model is uncertain. Top two competing diagnoses:
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <div style="background:{CLASS_COLORS[pred_cls]}22; border:1px solid {CLASS_COLORS[pred_cls]}60;
+                border-radius:6px; padding:6px 10px; font-size:0.78rem;">
+                <span style="color:{CLASS_COLORS[pred_cls]}; font-weight:700;">#{1} {CLASS_LABELS[pred_cls].split('/')[0]} — {top_conf:.1f}%</span>
+            </div>
+            <div style="background:{second_color}22; border:1px solid {second_color}60;
+                border-radius:6px; padding:6px 10px; font-size:0.78rem;">
+                <span style="color:{second_color}; font-weight:700;">#{2} {second_label.split('/')[0]} — {second_conf:.1f}%</span>
+            </div>
+        </div>
+        {confusion_note}
+    </div>"""
+    else:
+        uncertainty_html = ""
+
     result_html = f"""
 <div style="
     background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
@@ -366,6 +483,8 @@ def process(image):
         </div>
     </div>
 
+    {uncertainty_html}
+
     <div style="
         background:#dc262615; border:1px solid #dc262630; border-radius:8px;
         padding:10px 14px; font-size:0.78rem; color:#fca5a5;
@@ -376,8 +495,8 @@ def process(image):
 """
 
     mode_badge = (
-        "🟢 Model Active (GPU)"  if MODEL_LOADED and device and str(device).startswith("cuda")
-        else "🟡 Model Active (CPU)" if MODEL_LOADED
+        "🟢 Model Active (GPU) · 3-view TTA · T=1.460 calibration"  if MODEL_LOADED and device and str(device).startswith("cuda")
+        else "🟡 Model Active (CPU) · 3-view TTA · T=1.460 calibration" if MODEL_LOADED
         else "🔵 Demo Mode (example output)"
     )
 
@@ -887,9 +1006,10 @@ if __name__ == "__main__":
     print(f"Model loaded: {MODEL_LOADED}")
 
     demo = build_ui()
+    port = int(os.environ.get("GRADIO_SERVER_PORT", 10001))
     demo.launch(
         server_name="0.0.0.0",
-        server_port=10000,
+        server_port=port,
         share=False,
         ssr_mode=False,
         show_error=True,

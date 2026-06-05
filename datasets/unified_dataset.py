@@ -460,6 +460,100 @@ def _parse_isic2024(data_dir: str) -> List[SkinLesionRecord]:
     return records
 
 
+def _parse_ddi(data_dir: str) -> List[SkinLesionRecord]:
+    """
+    Parse Stanford DDI (Diverse Dermatology Images) dataset.
+    Expected layout:
+      data/ddi/images/              (images, e.g. 000001.png)
+      data/ddi/ddi_metadata.csv     (columns: DDI_file, diagnosis, malignant, fitzpatrick_scale, etc.)
+
+    Matches granular diagnoses if 'diagnosis' column exists,
+    otherwise falls back to binary mapping (malignant -> mel, benign -> nv).
+    """
+    records: List[SkinLesionRecord] = []
+    cls_map = UnifiedSkinDataset.CLASS_TO_IDX
+
+    base = os.path.join(data_dir, 'ddi')
+    csv_path = os.path.join(base, 'ddi_metadata.csv')
+    img_dir = os.path.join(base, 'images')
+
+    # Fallback to direct subdirectory in data_dir
+    if not os.path.exists(csv_path):
+        csv_path = os.path.join(data_dir, 'ddi_metadata.csv')
+        img_dir = os.path.join(data_dir, 'images')
+
+    if not os.path.exists(csv_path) or not os.path.exists(img_dir):
+        return records
+
+    try:
+        df = pd.read_csv(csv_path)
+
+        # Identify filename column
+        file_col = None
+        for col in ['DDI_file', 'image_path', 'image', 'filename']:
+            if col in df.columns:
+                file_col = col
+                break
+        if file_col is None:
+            return records
+
+        # Identify diagnosis/disease column
+        diag_col = None
+        for col in ['diagnosis', 'label', 'disease', 'condition']:
+            if col in df.columns:
+                diag_col = col
+                break
+
+        # Identify malignancy column (fallback)
+        mal_col = None
+        for col in ['malignant', 'malignancy(malig=1)', 'malignancy', 'target']:
+            if col in df.columns:
+                mal_col = col
+                break
+
+        DDI_REMAP = {
+            'melanoma': 'mel',
+            'basal cell carcinoma': 'bcc',
+            'melanocytic nevus': 'nv',
+            'seborrheic keratosis': 'bkl',
+        }
+
+        for row in df.itertuples(index=False):
+            img_name = str(getattr(row, file_col)).strip()
+            img_path = os.path.join(img_dir, img_name)
+            if not os.path.exists(img_path):
+                continue
+
+            label_str = None
+            if diag_col is not None:
+                diag_val = str(getattr(row, diag_col)).lower().strip()
+                label_str = DDI_REMAP.get(diag_val)
+
+            if label_str is None and mal_col is not None:
+                mal_val = getattr(row, mal_col)
+                if isinstance(mal_val, bool):
+                    label_str = 'mel' if mal_val else 'nv'
+                else:
+                    label_str = 'mel' if int(mal_val) == 1 else 'nv'
+
+            if label_str is None or label_str not in cls_map:
+                continue
+
+            records.append(SkinLesionRecord(
+                image_path=img_path,
+                label_idx=cls_map[label_str],
+                patient_id=img_name,
+                dataset_name='DDI',
+            ))
+
+    except Exception as e:
+        print(f"  [DDI] Parse warning: {e}")
+        return records
+
+    print(f"  [DDI] Loaded {len(records)} records.")
+    return records
+
+
 def _parse_ph2(data_dir: str) -> List[SkinLesionRecord]:
     """
     Parse PH2 dataset.
@@ -621,6 +715,7 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
     all_records += _parse_isic2020(data_dir)
     all_records += _parse_isic2024(data_dir)
     all_records += _parse_ph2(data_dir)
+    all_records += _parse_ddi(data_dir)
 
     if len(all_records) == 0:
         import time

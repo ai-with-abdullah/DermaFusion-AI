@@ -29,6 +29,7 @@ class Config:
     ISIC_2020_DIR = os.path.join(DATA_DIR, "isic_2020")
     ISIC_2024_DIR = os.path.join(DATA_DIR, "isic_2024")
     PH2_DIR       = os.path.join(DATA_DIR, "ph2")
+    DDI_DIR       = os.path.join(DATA_DIR, "ddi")
 
     # ISIC 2024 downsampling: ratio=10 balances diversity vs epoch speed on T4×2
     # pos=~300 mel cases; ratio=10 → ~3,000 negatives in training
