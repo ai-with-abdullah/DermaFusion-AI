@@ -51,7 +51,7 @@ class Config:
     # =========================================================================
     SEED         = 42
     DEVICE       = "cuda" if torch.cuda.is_available() else "cpu"
-    NUM_WORKERS  = 2      # Set to 2 to prevent RAM OOM and thrashing on Kaggle's 2-core CPU
+    NUM_WORKERS  = 1      # Set to 1 to prevent RAM OOM (cuts worker memory footprint in half on Kaggle)
     EPOCHS       = 25     # Fresh training run from scratch
     PATIENCE     = 15     # Match EarlyStopping call in train_classifier.py
     BATCH_SIZE     = 2    # 401.6M model: batch=4 causes GPU 0 OOM with DataParallel gather.

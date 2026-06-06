@@ -730,9 +730,13 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
     all_records += _parse_ham10000(data_dir, masks_dir)
     all_records += _parse_isic2019(data_dir)
     all_records += _parse_isic2020(data_dir)
+    import gc
+    gc.collect()
+
     all_records += _parse_isic2024(data_dir)
     all_records += _parse_ph2(data_dir)
     all_records += _parse_ddi(data_dir)
+    gc.collect()
 
     if len(all_records) == 0:
         import time
@@ -759,6 +763,10 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
 
     # Split
     train_records, val_records, test_records = _patient_aware_split(all_records)
+    
+    # Delete the large all_records list immediately to free system memory
+    del all_records
+    gc.collect()
 
     # FIXED (Fix #4): Balance ISIC2024 negatives AFTER the split (not before).
     train_records = _downsample_isic2024_train(train_records)
@@ -771,6 +779,7 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
     # Note for paper: test uses ratio=50:1 (more representative than val ratio=20:1),
     # val uses ratio=20:1 (faster per-epoch validation). Both maintain class proportions.
 
+    gc.collect()
 
     # Build datasets
     train_ds = UnifiedSkinDataset(train_records, transforms=get_train_transforms())
