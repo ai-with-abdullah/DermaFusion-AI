@@ -45,12 +45,13 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
         
         # Calculate train dice score
         with torch.no_grad():
-            dice = compute_dice_score(logits, masks)
+            dice_sum, n_masked = compute_dice_score(logits, masks)
         
         loss_val = loss.item()
         if not (loss_val != loss_val):  # skip NaN losses
             losses.update(loss_val, images.size(0))
-        dice_scores.update(dice, images.size(0))
+        if n_masked > 0:
+            dice_scores.update(dice_sum / n_masked, n_masked)
         
         pbar.set_postfix({"Loss": f"{losses.avg:.4f}", "Dice": f"{dice_scores.avg:.4f}"})
         
@@ -74,12 +75,13 @@ def validate(model, loader, criterion, device):
                 logits = model(images)
             loss = criterion(logits.float(), masks)
                 
-            dice = compute_dice_score(logits, masks)
+            dice_sum, n_masked = compute_dice_score(logits, masks)
             
             loss_val = loss.item()
             if not (loss_val != loss_val):  # skip NaN
                 losses.update(loss_val, images.size(0))
-            dice_scores.update(dice, images.size(0))
+            if n_masked > 0:
+                dice_scores.update(dice_sum / n_masked, n_masked)
             
             pbar.set_postfix({"Loss": f"{losses.avg:.4f}", "Dice": f"{dice_scores.avg:.4f}"})
             

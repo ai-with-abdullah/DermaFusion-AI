@@ -368,24 +368,31 @@ def log_metrics(metrics: dict, logger, prefix: str = "Test") -> None:
 
 def compute_dice_score(logits, targets, smooth=1e-6):
     """
-    Computes Dice score for binary segmentation.
+    Computes sum of Dice scores and count of images with actual lesion masks (targets.sum() > 0).
+    Only images with actual lesion masks are evaluated to prevent empty-mask images from diluting
+    the epoch-level Dice average.
 
-    FIXED: Returns 0.0 when BOTH prediction and target are all-zeros (empty mask).
-    Previously smooth/(smooth) = 1.0 was returned for every empty-mask image,
-    inflating reported Dice to 1.0 even though only HAM10000 has real masks
-    (2.4% of training data). Now only images with actual lesion masks count.
+    Returns:
+        dice_sum (float): Sum of Dice scores for masked images in the batch.
+        n_masked (int): Number of images in the batch with actual masks.
     """
-    probs   = torch.sigmoid(logits)
-    preds   = (probs > 0.5).float()
-    preds   = preds.view(-1)
-    targets = targets.view(-1)
-
-    # When both are empty (no lesion in image), return 0.0 — not a trivial 1.0
-    # This prevents empty masks from inflating the epoch-level Dice average
-    if preds.sum() == 0 and targets.sum() == 0:
-        return 0.0
-
-    inter   = (preds * targets).sum()
-    dice    = (2. * inter + smooth) / (preds.sum() + targets.sum() + smooth)
-    return dice.item()
+    probs = torch.sigmoid(logits)
+    preds = (probs > 0.5).float()
+    
+    batch_size = targets.size(0)
+    dice_sum = 0.0
+    n_masked = 0
+    
+    for i in range(batch_size):
+        t_i = targets[i].view(-1)
+        p_i = preds[i].view(-1)
+        
+        # Only evaluate images that have a true mask (from HAM10000)
+        if t_i.sum() > 0:
+            inter = (p_i * t_i).sum()
+            dice = (2. * inter + smooth) / (p_i.sum() + t_i.sum() + smooth)
+            dice_sum += dice.item()
+            n_masked += 1
+            
+    return dice_sum, n_masked
 
