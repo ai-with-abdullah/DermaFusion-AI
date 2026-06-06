@@ -801,13 +801,11 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
     )
     val_loader = DataLoader(
         val_ds, batch_size=val_batch, shuffle=False,
-        num_workers=config.NUM_WORKERS, pin_memory=True,
-        persistent_workers=(config.NUM_WORKERS > 0)
+        num_workers=0, pin_memory=True
     )
     test_loader = DataLoader(
         test_ds, batch_size=val_batch, shuffle=False,
-        num_workers=config.NUM_WORKERS, pin_memory=True,
-        persistent_workers=(config.NUM_WORKERS > 0)
+        num_workers=0, pin_memory=True
     )
 
     return train_loader, val_loader, test_loader, train_records
