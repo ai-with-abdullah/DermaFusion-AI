@@ -797,7 +797,7 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
         train_ds, batch_size=batch_size,
         sampler=sampler,
         num_workers=config.NUM_WORKERS, pin_memory=True, drop_last=True,
-        persistent_workers=(config.NUM_WORKERS > 0)
+        persistent_workers=False
     )
     val_loader = DataLoader(
         val_ds, batch_size=val_batch, shuffle=False,
