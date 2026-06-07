@@ -709,7 +709,7 @@ def get_weighted_sampler(records: List[SkinLesionRecord]) -> WeightedRandomSampl
     return sampler
 
 
-def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batch_size: int = None):
+def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batch_size: int = None, segmentation_only: bool = False):
     """
     Main entry point. Loads all available datasets, merges, splits, and
     returns (train_loader, val_loader, test_loader, train_records).
@@ -767,6 +767,11 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
     # Delete the large all_records list immediately to free system memory
     del all_records
     gc.collect()
+
+    if segmentation_only:
+        train_records = [r for r in train_records if r.mask_path and os.path.exists(r.mask_path)]
+        val_records   = [r for r in val_records   if r.mask_path and os.path.exists(r.mask_path)]
+        test_records  = [r for r in test_records  if r.mask_path and os.path.exists(r.mask_path)]
 
     # FIXED (Fix #4): Balance ISIC2024 negatives AFTER the split (not before).
     train_records = _downsample_isic2024_train(train_records)

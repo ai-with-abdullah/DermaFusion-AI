@@ -105,6 +105,7 @@ def main():
         config.DATA_DIR,
         masks_dir=os.path.join(config.DATA_DIR, "masks"),
         batch_size=seg_batch,
+        segmentation_only=True,
     )
 
     # ── Segmentation model: Swin U-Net (or fallback) ─────────────────────── #
