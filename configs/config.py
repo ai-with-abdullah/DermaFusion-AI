@@ -57,8 +57,10 @@ class Config:
     BATCH_SIZE     = 2    # 401.6M model: batch=4 causes GPU 0 OOM with DataParallel gather.
                           # batch=2 → DataParallel guard skips (per_gpu_batch=1<2) → single GPU only.
                           # Safer: single GPU with full memory for activations + optimizer + EMA.
-    SEG_BATCH_SIZE = 8    # Swin-Tiny (95M, 224px): batch=8 per GPU (lighter model)
-    VAL_BATCH_SIZE = 16   # Val/test: no gradients → memory cheaper → 4× larger batch → 4× faster val
+    SEG_BATCH_SIZE = 4    # Swin-Tiny U-Net at IMAGE_SIZE=448 (not 224): batch=4 is OOM-safe on T4.
+                          # Raise to 6-8 only if `nvidia-smi` shows spare memory during seg training.
+    VAL_BATCH_SIZE = 8    # Val loads BOTH UNet (95M) + classifier (405M) on GPU; 16 risks OOM at 448px.
+                          # No gradients, so 8 is still fast. Raise if memory allows.
     GRADIENT_ACCUMULATION_STEPS = 32   # Effective batch = 64 (batch=2 × accum=32)
 
 
