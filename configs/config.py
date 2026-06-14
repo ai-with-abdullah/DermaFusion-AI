@@ -52,22 +52,24 @@ class Config:
     SEED         = 42
     DEVICE       = "cuda" if torch.cuda.is_available() else "cpu"
     NUM_WORKERS  = 1      # Set to 1 to prevent RAM OOM (cuts worker memory footprint in half on Kaggle)
-    EPOCHS       = 25     # Fresh training run from scratch
+    EPOCHS       = 15     # 25 was overkill for fine-tuning pretrained backbones; 15 fits the
+                          # weekly GPU quota and converges fine (early stopping still guards).
     PATIENCE     = 15     # Match EarlyStopping call in train_classifier.py
-    BATCH_SIZE     = 2    # 401.6M model: batch=4 causes GPU 0 OOM with DataParallel gather.
-                          # batch=2 → DataParallel guard skips (per_gpu_batch=1<2) → single GPU only.
-                          # Safer: single GPU with full memory for activations + optimizer + EMA.
+    BATCH_SIZE     = 4    # 2 per GPU across 2× T4 → DataParallel engages BOTH GPUs (~2× faster
+                          # wall-clock). Gradient checkpointing keeps 2 imgs/GPU within 15GB.
+                          # ⚠ If you see CUDA OOM in the first ~50 steps, set this back to 2
+                          #   (single GPU) and lower EPOCHS to 12.
     SEG_BATCH_SIZE = 4    # Swin-Tiny U-Net at IMAGE_SIZE=448 (not 224): batch=4 is OOM-safe on T4.
                           # Raise to 6-8 only if `nvidia-smi` shows spare memory during seg training.
     VAL_BATCH_SIZE = 8    # Val loads BOTH UNet (95M) + classifier (405M) on GPU; 16 risks OOM at 448px.
                           # No gradients, so 8 is still fast. Raise if memory allows.
-    GRADIENT_ACCUMULATION_STEPS = 32   # Effective batch = 64 (batch=2 × accum=32)
+    GRADIENT_ACCUMULATION_STEPS = 16   # Effective batch = 64 (batch=4 × accum=16) — unchanged dynamics
 
 
     # =========================================================================
     # LR Warmup + Layer Decay (2026 SOTA training recipe)
     # =========================================================================
-    WARMUP_EPOCHS = 7      # Slightly longer warmup for larger model (more stable)
+    WARMUP_EPOCHS = 3      # Shorter warmup to leave room for cosine decay within 15 epochs
     LAYER_DECAY   = 0.75   # Each transformer layer gets LR × LAYER_DECAY^depth
 
     # =========================================================================
