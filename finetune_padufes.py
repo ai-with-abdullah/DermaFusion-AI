@@ -57,8 +57,10 @@ USE_CLAHE     = True        # CLAHE preprocessing (same as test)
 MEL_WEIGHT    = 8.0         # Extra loss weight for MEL — protects 100% sensitivity
 SEED          = 42
 
-# Modules to FREEZE (never trained)
-FROZEN_MODULES = ['branch_eva', 'branch_conv', 'proj_eva', 'proj_conv', 'fusion']
+# Modules to FREEZE (never trained). Includes the spatial Lesion-Aware fusion
+# modules so head-only domain adaptation does not perturb the learned fusion.
+FROZEN_MODULES = ['branch_eva', 'branch_conv', 'proj_eva', 'proj_conv', 'fusion',
+                  'spatial_proj_eva', 'spatial_proj_conv', 'bug_attn', 'mirror_attn']
 # Modules to TRAIN (head + small gated combiner)
 TRAINABLE_MODULES = ['gate', 'classifier']
 
@@ -286,7 +288,7 @@ def train_one_epoch(model, unet, loader, optimizer, criterion, device):
             mask_logits = unet(images)
             images_seg  = apply_mask(images, mask_logits)
 
-        logits, _ = model(images, images_seg)
+        logits, _ = model(images, images_seg, torch.sigmoid(mask_logits.float()))
         loss = criterion(logits, labels)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(
@@ -311,7 +313,7 @@ def evaluate(model, unet, loader, criterion, device):
         images, labels = images.to(device), labels.to(device)
         mask_logits = unet(images)
         images_seg  = apply_mask(images, mask_logits)
-        logits, _ = model(images, images_seg)
+        logits, _ = model(images, images_seg, torch.sigmoid(mask_logits.float()))
         loss = criterion(logits, labels)
         total_loss += loss.item() * images.size(0)
         all_preds.extend(logits.argmax(1).cpu().numpy())
@@ -342,7 +344,7 @@ def full_test_evaluation(model, unet, loader, device):
         images = images.to(device)
         mask_logits = unet(images)
         images_seg  = apply_mask(images, mask_logits)
-        logits, _ = model(images, images_seg)
+        logits, _ = model(images, images_seg, torch.sigmoid(mask_logits.float()))
         probs = F.softmax(logits, dim=1).cpu().numpy()
         all_probs.extend(probs)
         all_preds.extend(probs.argmax(1).tolist())

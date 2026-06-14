@@ -367,6 +367,86 @@ class AdvancedSegLoss(nn.Module):
         )
 
 
+# =========================================================================== #
+#              LEARNABLE TVERSKY LOSS  (Novelty #3)                            #
+# =========================================================================== #
+
+class LearnableTverskyLoss(nn.Module):
+    """
+    Learnable Tversky Loss (LTL).
+
+    Tversky = TP / (TP + α·FP + β·FN),  with α and β LEARNED from data instead
+    of hand-tuned. The two coefficients are parameterized by a raw 2-vector and
+    passed through softmax, which enforces α + β = 1 (a single trade-off knob
+    between false-positive and false-negative penalties) while keeping both
+    strictly positive and differentiable.
+
+    Every prior dermoscopy paper uses the fixed α=0.3, β=0.7 from Salehi et al.
+    (2017). Here the network discovers the task-optimal trade-off; the learned
+    values are logged each epoch and reported as a contribution.
+
+    NaN-safety: the smooth term in both numerator and denominator means an
+    all-zero mask (possible after aggressive crop augmentation) yields
+    smooth/smooth = 1 → loss 0, never a division by zero.
+
+    Init: raw=[-0.4235, +0.4235] → softmax → (α≈0.300, β≈0.700), matching the
+    classic Salehi initialization so training starts from the established prior.
+    (The novelty-doc's [-0.85, 0.85] actually gives ≈(0.155, 0.845) — corrected.)
+    """
+    def __init__(self, smooth: float = 1e-6):
+        super().__init__()
+        self.raw    = nn.Parameter(torch.tensor([-0.4235, 0.4235]))
+        self.smooth = smooth
+
+    def forward(self, logits, targets):
+        ab          = F.softmax(self.raw, dim=0)
+        alpha, beta = ab[0], ab[1]
+
+        probs   = torch.sigmoid(logits).reshape(-1)
+        targets = targets.float().reshape(-1)
+        tp = (probs * targets).sum()
+        fp = (probs * (1 - targets)).sum()
+        fn = ((1 - probs) * targets).sum()
+
+        tversky = (tp + self.smooth) / (tp + alpha * fp + beta * fn + self.smooth)
+        return 1.0 - tversky
+
+    def get_learned_params(self) -> dict:
+        ab = F.softmax(self.raw.detach(), dim=0)
+        return {'alpha': float(ab[0]), 'beta': float(ab[1])}
+
+
+class LearnableTverskyBCELoss(nn.Module):
+    """
+    BCE + Learnable Tversky for segmentation training.
+
+    Replaces the plain BCEWithLogitsLoss used previously (Bug #5). BCE keeps the
+    per-pixel gradient stable and well-behaved on near-empty masks; the learnable
+    Tversky term adds region-overlap optimisation with a data-driven FP/FN
+    trade-off. Default 0.5/0.5 weighting.
+
+    IMPORTANT: this module owns trainable parameters (the Tversky α,β). They must
+    be added to the optimizer — see train_segmentation.py — or they stay frozen
+    at init and the learnable behaviour does not happen.
+    """
+    def __init__(self, bce_weight: float = 0.5, tversky_weight: float = 0.5):
+        super().__init__()
+        self.bce            = nn.BCEWithLogitsLoss()
+        self.tversky        = LearnableTverskyLoss()
+        self.bce_weight     = bce_weight
+        self.tversky_weight = tversky_weight
+
+    def forward(self, logits, targets):
+        targets = targets.float()
+        return (
+            self.bce_weight     * self.bce(logits, targets)
+            + self.tversky_weight * self.tversky(logits, targets)
+        )
+
+    def get_learned_params(self) -> dict:
+        return self.tversky.get_learned_params()
+
+
 def get_seg_model(pretrained: bool = True) -> SwinTransformerUNet:
     """Factory function matching train_segmentation.py import API."""
     return SwinTransformerUNet(pretrained=pretrained)

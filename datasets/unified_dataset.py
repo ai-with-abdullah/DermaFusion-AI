@@ -55,6 +55,12 @@ PH2_REMAP = {
     2: 'mel',    # Melanoma
 }
 
+# Source dataset → integer id (for Source-Aware Logit Adjustment, Novelty #1).
+# Order is fixed so a trained SALA margin matrix stays index-aligned across runs.
+SOURCES = ['HAM10000', 'ISIC2019', 'ISIC2020', 'ISIC2024', 'PH2', 'DDI', 'DUMMY']
+SOURCE_TO_IDX = {s: i for i, s in enumerate(SOURCES)}
+NUM_SOURCES = len(SOURCES)
+
 
 # =========================================================================== #
 #                   CORE DATASET CLASS                                         #
@@ -130,6 +136,7 @@ class UnifiedSkinDataset(Dataset):
             'label':        label_idx,
             'image_id':     os.path.splitext(os.path.basename(img_path))[0],
             'dataset_name': dataset_name,
+            'source_id':    SOURCE_TO_IDX.get(dataset_name, NUM_SOURCES - 1),  # SALA
         }
 
 
@@ -456,9 +463,17 @@ def _parse_isic2024(data_dir: str) -> List[SkinLesionRecord]:
     # Use real patient_id if available (prevents same patient in train+test)
     has_patient_col = 'patient_id' in df.columns
 
+    missing_count = 0
     for row in df.itertuples(index=False):  # itertuples: 10-100x faster than iterrows (401K rows!)
         label_str = 'mel' if int(row.target) == 1 else 'nv'
         img_path = os.path.join(img_dir, f"{getattr(row, id_col)}.jpg")
+
+        # Bug #7 fix: skip rows whose image file is absent. Previously these were
+        # appended anyway; __getitem__ then substituted a BLACK image with the real
+        # label, silently poisoning training with mislabeled blank samples.
+        if not os.path.exists(img_path):
+            missing_count += 1
+            continue
 
         pid = str(row.patient_id) if has_patient_col else str(getattr(row, id_col))
         records.append(SkinLesionRecord(
@@ -468,6 +483,8 @@ def _parse_isic2024(data_dir: str) -> List[SkinLesionRecord]:
             dataset_name='ISIC2024',
         ))
 
+    if missing_count > 0:
+        print(f"  [ISIC 2024] Skipped {missing_count} rows with missing image files.")
     n_pos = sum(1 for r in records if r.label_idx == cls_map['mel'])
     if not has_patient_col:
         print("  [ISIC 2024] WARNING: no 'patient_id' column found — using isic_id as patient ID."
@@ -640,6 +657,55 @@ def _parse_ph2(data_dir: str) -> List[SkinLesionRecord]:
 #                   SPLIT & DATALOADER BUILDERS                                #
 # =========================================================================== #
 
+def _deduplicate_records(records: List[SkinLesionRecord]) -> List[SkinLesionRecord]:
+    """
+    Remove cross-dataset and within-dataset duplicate images BEFORE splitting.
+
+    Why this is necessary:
+      - HAM10000 is a strict subset of the ISIC 2019 training set (full overlap,
+        ~10K images), so every HAM10000 image is also parsed from ISIC 2019.
+      - ISIC 2019 / 2020 / 2024 are all derived from the same ISIC archive and can
+        share images.
+    Without dedup the same physical image enters the pool 2–3× under different
+    dataset_names. That (a) duplicates training samples and (b) leaks images across
+    splits — the patient-aware split groups on f"{dataset_name}_{patient_id}", so the
+    SAME image under two dataset_names gets two different group keys and can land in
+    both train and test, inflating test metrics.
+
+    Identity key: all ISIC-derived datasets name files by the canonical ISIC id
+    (e.g. 'ISIC_0024306'), so the lowercased image basename uniquely identifies an
+    image across them. PH2 ('IMDxxx') and DDI use disjoint filename namespaces and
+    will never be falsely merged.
+
+    When the same image appears under multiple datasets we keep ONE copy, choosing
+    the dataset with the richest / most curated label so a fine-grained 7-class label
+    is never demoted to a coarse binary mel/nv one. Priority (lower = kept):
+        HAM10000 < ISIC2019 < PH2 < DDI < ISIC2020 < ISIC2024
+    """
+    PRIORITY = {
+        'HAM10000': 0, 'ISIC2019': 1, 'PH2': 2, 'DDI': 3, 'ISIC2020': 4, 'ISIC2024': 5,
+    }
+    best: Dict[str, SkinLesionRecord] = {}
+    for r in records:
+        key = os.path.splitext(os.path.basename(r.image_path))[0].lower()
+        prev = best.get(key)
+        if prev is None or PRIORITY.get(r.dataset_name, 99) < PRIORITY.get(prev.dataset_name, 99):
+            best[key] = r
+
+    deduped = list(best.values())
+    removed = len(records) - len(deduped)
+    if removed > 0:
+        from collections import Counter
+        before = Counter(r.dataset_name for r in records)
+        after  = Counter(r.dataset_name for r in deduped)
+        print(f"  [Dedup] Removed {removed} duplicate images "
+              f"(kept {len(deduped)} of {len(records)}).")
+        print(f"  [Dedup] Per-dataset counts: before={dict(before)} → after={dict(after)}")
+    else:
+        print(f"  [Dedup] No duplicate images found across datasets ({len(deduped)} unique).")
+    return deduped
+
+
 def _patient_aware_split(
     records: List[SkinLesionRecord],
     train_ratio: float = 0.70,
@@ -672,6 +738,22 @@ def _patient_aware_split(
     train_records = [records[i]            for i in train_idx]
     val_records   = [temp_records[i]       for i in val_idx_local]
     test_records  = [temp_records[i]       for i in test_idx_local]
+
+    # D5 leakage guard: verify NO patient group spans two splits. Catches any
+    # leakage across all datasets (e.g. ISIC2024 patients with multiple lesions).
+    # Note: if a dataset lacks real patient ids (each image its own "patient"),
+    # this passes trivially — the loud per-dataset warning in the parser covers
+    # that case, since the data itself cannot reveal same-patient relationships.
+    g_train = {f"{r.dataset_name}_{r.patient_id}" for r in train_records}
+    g_val   = {f"{r.dataset_name}_{r.patient_id}" for r in val_records}
+    g_test  = {f"{r.dataset_name}_{r.patient_id}" for r in test_records}
+    leak_tv, leak_tt, leak_vt = g_train & g_val, g_train & g_test, g_val & g_test
+    if leak_tv or leak_tt or leak_vt:
+        print(f"  [Split] ⚠️  PATIENT LEAKAGE DETECTED — "
+              f"train∩val={len(leak_tv)}, train∩test={len(leak_tt)}, val∩test={len(leak_vt)}")
+    else:
+        print(f"  [Split] No patient leakage across splits ✓  "
+              f"(train={len(train_records)}, val={len(val_records)}, test={len(test_records)})")
 
     return train_records, val_records, test_records
 
@@ -751,6 +833,10 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
         time.sleep(3)
         all_records = _make_dummy_records(data_dir)
 
+    # Cross-dataset + within-dataset de-duplication (before split → no leakage).
+    all_records = _deduplicate_records(all_records)
+    gc.collect()
+
     # Report
     from collections import Counter
     label_dist = Counter(r.label_idx for r in all_records)
@@ -774,15 +860,15 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
         test_records  = [r for r in test_records  if r.mask_path and os.path.exists(r.mask_path)]
 
     # FIXED (Fix #4): Balance ISIC2024 negatives AFTER the split (not before).
-    train_records = _downsample_isic2024_train(train_records)
-
-    # FIXED (Val Speed): Also downsample ISIC2024 val/test negatives.
-    # Without this, val set has ~40K ISIC2024 records → 17K steps → 12 hrs/epoch.
-    # Using a higher ratio (20:1) than train keeps evaluation representative.
-    val_records  = _downsample_isic2024_val(val_records)
-    test_records = _downsample_isic2024_val(test_records, neg_to_pos_ratio=50)
-    # Note for paper: test uses ratio=50:1 (more representative than val ratio=20:1),
-    # val uses ratio=20:1 (faster per-epoch validation). Both maintain class proportions.
+    # D4 fix: use ONE consistent neg:pos ratio for train/val/test. Previously
+    # train=10:1, val=20:1, test=50:1 — three different ISIC2024 class balances
+    # meant val and test AUC were measured on different distributions than each
+    # other and than training, making the numbers non-comparable. All three splits
+    # now use config.ISIC2024_NEG_TO_POS_RATIO so the class proportion is identical.
+    isic24_ratio = getattr(config, 'ISIC2024_NEG_TO_POS_RATIO', 10)
+    train_records = _downsample_isic2024(train_records, isic24_ratio, config.SEED, split_name='Train')
+    val_records   = _downsample_isic2024(val_records,   isic24_ratio, config.SEED, split_name='Val')
+    test_records  = _downsample_isic2024(test_records,  isic24_ratio, config.SEED, split_name='Test')
 
     gc.collect()
 
@@ -940,3 +1026,28 @@ def get_class_weights_from_records(records: List[SkinLesionRecord]) -> torch.Ten
         weights[mel_idx] *= 2.0
 
     return torch.FloatTensor(weights)
+
+
+def get_source_class_priors(records: List[SkinLesionRecord]) -> torch.Tensor:
+    """
+    Per-source class-prior matrix for Source-Aware Logit Adjustment (Novelty #1).
+
+    Returns a (NUM_SOURCES, NUM_CLASSES) tensor where row d is the empirical class
+    distribution π^(d) of source dataset d (rows sum to 1). Sources absent from
+    `records` get a uniform row so log π^(d) is finite. Computed on TRAIN records
+    only — never val/test — to avoid leaking the evaluation distribution.
+    """
+    C = config.NUM_CLASSES
+    counts = np.zeros((NUM_SOURCES, C), dtype=np.float64)
+    for r in records:
+        d = SOURCE_TO_IDX.get(r.dataset_name, NUM_SOURCES - 1)
+        counts[d, r.label_idx] += 1
+
+    priors = np.empty((NUM_SOURCES, C), dtype=np.float32)
+    for d in range(NUM_SOURCES):
+        row_sum = counts[d].sum()
+        if row_sum <= 0:
+            priors[d] = 1.0 / C                      # unseen source → uniform
+        else:
+            priors[d] = counts[d] / row_sum
+    return torch.from_numpy(priors)

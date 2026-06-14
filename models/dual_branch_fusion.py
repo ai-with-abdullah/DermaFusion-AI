@@ -22,6 +22,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from models.lesion_aware_fusion import (
+    BoundaryUncertaintyGatedAttention,
+    MirrorAsymmetryAttention,
+)
+
 
 # =========================================================================== #
 #                      MULTI-HEAD CROSS ATTENTION FUSION                       #
@@ -251,9 +256,13 @@ class DualBranchFusionClassifier(nn.Module):
         num_heads: int = 8,
         num_classes: int = 7,
         dropout: float = 0.2,
+        use_spatial_fusion: bool = True,
+        fusion_grid: int = 14,
     ):
         super().__init__()
         self.fusion_dim = fusion_dim
+        self.use_spatial_fusion = use_spatial_fusion
+        self.fusion_grid = fusion_grid
 
         # ----- Branch A: EVA-02 (Global/Contextual) ----- #
         from models.sota25_backbone import Sota2025Backbone
@@ -299,6 +308,24 @@ class DualBranchFusionClassifier(nn.Module):
             dropout=dropout,
         )
 
+        # ----- Spatial Lesion-Aware Fusion (Novelties #2 + #3) ----- #
+        # 1×1 projections from each backbone's native channel dim to fusion_dim,
+        # applied to SPATIAL feature grids (not pooled vectors). Both grids are
+        # adaptive-pooled to a common fusion_grid×fusion_grid so cross-attention,
+        # the mask, and the asymmetry frame all live on the same lattice.
+        if use_spatial_fusion:
+            self.spatial_proj_eva  = nn.Conv2d(eva_dim,  fusion_dim, kernel_size=1)
+            conv_backbone_dim      = self.branch_conv.backbone.num_features
+            self.spatial_proj_conv = nn.Conv2d(conv_backbone_dim, fusion_dim, kernel_size=1)
+            # Novelty #2: boundary-uncertainty-gated cross-attention
+            self.bug_attn = BoundaryUncertaintyGatedAttention(
+                dim=fusion_dim, num_heads=num_heads, dropout=dropout,
+            )
+            # Novelty #3: mirror-asymmetry attention (on the segmented/texture grid)
+            self.mirror_attn = MirrorAsymmetryAttention(dim=fusion_dim)
+            # Learnable weight for folding the asymmetry vector into the combined repr
+            self.asym_eta = nn.Parameter(torch.tensor(0.5))
+
         # ----- Classifier Head ----- #
         self.classifier = ClassifierHead(
             in_features=fusion_dim,
@@ -320,35 +347,77 @@ class DualBranchFusionClassifier(nn.Module):
         print(f"  Num classes:         {num_classes}")
         print(f"{'='*70}\n")
 
-    def forward(self, img_orig: torch.Tensor, img_seg: torch.Tensor):
+    def forward(self, img_orig: torch.Tensor, img_seg: torch.Tensor,
+                mask_prob: torch.Tensor = None,
+                disable_uncertainty_bias: bool = False,
+                disable_asymmetry: bool = False):
         """
-        Forward pass through both branches with fusion.
-        
+        Forward pass through both branches with Lesion-Aware Spatial Fusion.
+
         Args:
-            img_orig: Original images (B, 3, H, W) — fed to Mamba branch
-            img_seg:  Segmented images (B, 3, H, W) — fed to ConvNeXt branch
-            
+            img_orig:  Original images (B, 3, H, W) — global branch (EVA-02)
+            img_seg:   Segmented images (B, 3, H, W) — local branch (ConvNeXt)
+            mask_prob: Soft lesion-probability map (B, 1, H, W) ∈ [0,1] from the
+                       UNet (sigmoid of its logits). If None, a hard mask is
+                       recovered from img_seg (background pixels are exactly 0).
+            disable_uncertainty_bias: ablation — turns off Novelty #2's bias term
+                       (γ·u − δ·(1−p)), reducing BUG-Attn to plain spatial attention.
+            disable_asymmetry: ablation — turns off Novelty #3's contribution.
+
         Returns:
-            logits:       (B, num_classes) classification logits
-            attn_weights: Attention weights from cross-attention (for visualization)
+            logits:       (B, num_classes)
+            attn_weights: (B, Nq, Nk) cross-attention (now genuinely informative,
+                          since fusion is over real spatial token grids)
         """
-        # Branch A: EVA-02 on original image (global dependencies)
-        feat_eva = self.branch_eva(img_orig)     # (B, eva_dim)
-        feat_eva = self.proj_eva(feat_eva)      # (B, fusion_dim)
+        if not self.use_spatial_fusion:
+            # ---- Legacy pooled-vector path (fallback / pooled ablations) ---- #
+            feat_eva  = self.proj_eva(self.branch_eva(img_orig))
+            feat_conv = self.proj_conv(self.branch_conv(img_seg))
+            fused, attn_weights = self.fusion(feat_eva, feat_conv)
+            combined = self.gate(fused, feat_eva, feat_conv)
+            return self.classifier(combined), attn_weights
 
-        # Branch B: ConvNeXt V3 on segmented image (local textures)
-        feat_conv = self.branch_conv(img_seg)        # (B, fusion_dim)
-        feat_conv = self.proj_conv(feat_conv)         # (B, fusion_dim)
+        G = self.fusion_grid
 
-        # Cross-attention fusion
-        fused, attn_weights = self.fusion(feat_eva, feat_conv)  # (B, fusion_dim)
+        # ----- Spatial token grids from both backbones ----- #
+        eva_grid  = self.branch_eva.forward_tokens(img_orig)    # (B, eva_dim,  Ge, Ge)
+        conv_grid = self.branch_conv.forward_tokens(img_seg)    # (B, conv_dim, Gc, Gc)
 
-        # Gated residual combination
-        combined = self.gate(fused, feat_eva, feat_conv)  # (B, fusion_dim)
+        # Project to fusion_dim and resample to the common G×G lattice
+        eva_grid  = F.adaptive_avg_pool2d(self.spatial_proj_eva(eva_grid),  (G, G))  # (B, D, G, G)
+        conv_grid = F.adaptive_avg_pool2d(self.spatial_proj_conv(conv_grid), (G, G)) # (B, D, G, G)
 
-        # Classification
-        logits = self.classifier(combined)  # (B, num_classes)
+        # ----- Mask probability on the G×G lattice ----- #
+        if mask_prob is None:
+            mask_prob = (img_seg.abs().sum(dim=1, keepdim=True) > 1e-6).float()
+        p_grid = F.adaptive_avg_pool2d(mask_prob, (G, G)).clamp(0.0, 1.0)            # (B, 1, G, G)
 
+        eva_tokens  = eva_grid.flatten(2).transpose(1, 2)       # (B, N, D)
+        conv_tokens = conv_grid.flatten(2).transpose(1, 2)      # (B, N, D)
+        p_tokens    = p_grid.flatten(1)                         # (B, N)
+
+        # ----- Novelty #2: boundary-uncertainty-gated cross-attention ----- #
+        if disable_uncertainty_bias:
+            prev = self.bug_attn.enable_bias
+            self.bug_attn.enable_bias = False
+            fused_tokens, attn_weights = self.bug_attn(eva_tokens, conv_tokens, p_tokens)
+            self.bug_attn.enable_bias = prev
+        else:
+            fused_tokens, attn_weights = self.bug_attn(eva_tokens, conv_tokens, p_tokens)
+
+        # Pool tokens → vectors for the gated combination + classifier
+        fused_vec     = fused_tokens.mean(dim=1)                # (B, D)
+        feat_eva_vec  = eva_tokens.mean(dim=1)                  # (B, D)
+        feat_conv_vec = conv_tokens.mean(dim=1)                 # (B, D)
+
+        combined = self.gate(fused_vec, feat_eva_vec, feat_conv_vec)   # (B, D)
+
+        # ----- Novelty #3: mirror-asymmetry on the segmented/texture grid ----- #
+        if not disable_asymmetry:
+            asym_vec = self.mirror_attn(conv_grid, p_grid)      # (B, D)
+            combined = combined + self.asym_eta * asym_vec
+
+        logits = self.classifier(combined)
         return logits, attn_weights
 
     def get_eva_params(self):
@@ -356,20 +425,37 @@ class DualBranchFusionClassifier(nn.Module):
         return list(self.branch_eva.parameters())
 
     def get_convnext_params(self):
-        """Returns ConvNeXt backbone parameters only (for slow differential LR)."""
-        return list(self.branch_conv.parameters())
+        """Returns ConvNeXt PRETRAINED BACKBONE parameters only (slow differential LR).
+
+        Bug #1 fix: previously this returned list(self.branch_conv.parameters()),
+        which swept in branch_conv.projector — a randomly-initialized FeatureProjector.
+        That projector was therefore trained at the slow backbone LR (1e-5) instead of
+        the head LR (1e-4), learning ~10× too slowly and bottlenecking the local branch.
+        The projector now lives in get_head_params() instead.
+        """
+        return list(self.branch_conv.backbone.parameters())
 
     def get_head_params(self):
         """Returns fusion + projection + classifier parameters (higher LR).
-        
-        proj_eva and proj_conv are randomly initialized — they need head LR (1e-4)
-        not backbone LR (2e-5 / 1e-5) to learn effectively.
+
+        All of these are randomly initialized and need the head LR (1e-4), not the
+        backbone LR (1e-5), to learn effectively:
+          - proj_eva (Linear 1024→512), proj_conv (Identity here → contributes nothing)
+          - branch_conv.projector (ConvNeXt FeatureProjector 1024→512)  ← Bug #1 fix
+          - fusion (cross-attention), gate, classifier
         """
         params = (
             list(self.proj_eva.parameters()    if isinstance(self.proj_eva,  nn.Linear) else [])
             + list(self.proj_conv.parameters() if isinstance(self.proj_conv, nn.Linear) else [])
+            + list(self.branch_conv.projector.parameters())
             + list(self.fusion.parameters())
             + list(self.gate.parameters())
             + list(self.classifier.parameters())
         )
+        if self.use_spatial_fusion:
+            params += list(self.spatial_proj_eva.parameters())
+            params += list(self.spatial_proj_conv.parameters())
+            params += list(self.bug_attn.parameters())
+            params += list(self.mirror_attn.parameters())
+            params += [self.asym_eta]
         return params

@@ -15,9 +15,8 @@ from configs.config import config
 from utils.seed import seed_everything
 from utils.logger import setup_logger
 from datasets.unified_dataset import get_unified_dataloaders
-from models.transformer_unet import SwinTransformerUNet, AdvancedSegLoss
+from models.transformer_unet import SwinTransformerUNet, LearnableTverskyBCELoss
 from models.unet import LightweightUNet   # kept as fallback
-from training.losses import CombinedSegLoss
 from evaluation.metrics import compute_dice_score
 from training.train_utils import AverageMeter, EarlyStopping
 
@@ -133,13 +132,20 @@ def main():
     # Helper: unwrap DataParallel to get raw model for weight saving
     raw_model = model.module if isinstance(model, torch.nn.DataParallel) else model
 
-    # Optimizer & Scheduler
+    # ── Loss: BCE + Learnable Tversky (Bug #5 fix, Novelty #3) ───────────── #
+    # The learnable α,β live INSIDE the criterion as nn.Parameters. They must be
+    # optimized alongside the model, so the criterion's params are added to the
+    # optimizer below — otherwise α,β would stay frozen at their (0.3, 0.7) init.
+    # BCE keeps gradients stable on near-empty masks (the reason plain BCE was
+    # used before); the smooth term makes the Tversky branch NaN-safe.
+    criterion = LearnableTverskyBCELoss().to(config.DEVICE)
 
-    optimizer = optim.AdamW(model.parameters(), lr=config.SEG_LR, weight_decay=config.SEG_WEIGHT_DECAY)
+    # Optimizer & Scheduler
+    optimizer = optim.AdamW(
+        list(model.parameters()) + list(criterion.parameters()),
+        lr=config.SEG_LR, weight_decay=config.SEG_WEIGHT_DECAY,
+    )
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.EPOCHS)
-    
-    # ── Loss: Use stable BCE (Dice/Tversky → NaN when masks are all-zero) ── #
-    criterion = torch.nn.BCEWithLogitsLoss()
 
     # AMP Scaler
     scaler = GradScaler('cuda', enabled=(config.DEVICE == 'cuda'))
@@ -158,6 +164,8 @@ def main():
         raw_model.load_state_dict(ckpt['model'])
         optimizer.load_state_dict(ckpt['optimizer'])
         scheduler.load_state_dict(ckpt['scheduler'])
+        if 'criterion' in ckpt:
+            criterion.load_state_dict(ckpt['criterion'])  # restore learned α,β
         start_epoch = ckpt['epoch'] + 1
         best_dice   = ckpt.get('best_dice', 0.0)
         early_stopping.best_score = ckpt.get('best_score', None)
@@ -177,7 +185,11 @@ def main():
         
         logger.info(f"Train Loss: {train_loss:.4f} | Train Dice: {train_dice:.4f}")
         logger.info(f"Val Loss: {val_loss:.4f} | Val Dice: {val_dice:.4f}")
-        
+
+        # Log the learned Tversky coefficients (the publishable artifact)
+        learned = criterion.get_learned_params()
+        logger.info(f"Learned Tversky: alpha={learned['alpha']:.4f}  beta={learned['beta']:.4f}")
+
         early_stopping(val_dice, raw_model)
 
         # ── Save resume checkpoint after every epoch ────────────────────── #
@@ -186,6 +198,7 @@ def main():
             'model':      raw_model.state_dict(),
             'optimizer':  optimizer.state_dict(),
             'scheduler':  scheduler.state_dict(),
+            'criterion':  criterion.state_dict(),   # learned α,β
             'best_dice':  max(best_dice, val_dice),
             'best_score': early_stopping.best_score,
             'es_counter': early_stopping.counter,

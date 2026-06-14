@@ -79,12 +79,16 @@ def main():
     parser.add_argument("--ablation", type=str, default=None,
                         choices=["no_tta", "convnext_only", "eva_only", "no_attention", "no_segmentation"],
                         help="Ablation model to evaluate")
+    parser.add_argument("--no-sala", action="store_true", dest="no_sala",
+                        help="Evaluate the SALA ablation model (best_dual_branch_fusion_nosala.pth)")
     args = parser.parse_args()
     ablation = args.ablation
+    sala_tag = "_nosala" if args.no_sala else ""
 
     seed_everything(config.SEED)
     config.setup_dirs()
-    log_name = f"evaluate_{ablation}.log" if ablation else "evaluate_dual_branch.log"
+    log_name = (f"evaluate_{ablation}{sala_tag}.log" if ablation
+                else f"evaluate_dual_branch{sala_tag}.log")
     logger = setup_logger("evaluate", os.path.join(config.OUTPUT_DIR, log_name))
     logger.info("Starting Dual-Branch Fusion Evaluation (TTA enabled)")
     if ablation:
@@ -122,7 +126,8 @@ def main():
         dropout=config.FUSION_DROPOUT,
     ).to(config.DEVICE)
 
-    best_filename = f"best_classifier_{ablation}.pth" if ablation else "best_dual_branch_fusion.pth"
+    best_filename = (f"best_classifier_{ablation}{sala_tag}.pth" if ablation
+                     else f"best_dual_branch_fusion{sala_tag}.pth")
     model_path = os.path.join(config.WEIGHTS_DIR, best_filename)
     if os.path.exists(model_path):
         model.load_state_dict(torch.load(model_path, map_location=config.DEVICE,
@@ -205,7 +210,8 @@ def main():
             with autocast('cuda', enabled=(config.DEVICE == 'cuda')):
                 mask_logits = unet(images)
                 images_seg  = apply_mask(images, mask_logits)
-            logits, _ = model(images, images_seg)
+                mask_prob   = torch.sigmoid(mask_logits.float())
+            logits, _ = model(images, images_seg, mask_prob)
 
         probs = torch.softmax(logits, dim=1).cpu().numpy()
         preds = np.argmax(probs, axis=1)
@@ -273,8 +279,9 @@ def main():
             )
             logger.info(f"Saved separate confusion matrix for {dataset} to {ds_filename}")
 
-    # ── Run Ablation Study & Dashboard (Only when evaluating Full Model) ──── #
-    if ablation is None:
+    # ── Run Ablation Study & Dashboard (Only when evaluating the main Full Model) ── #
+    # Skipped for the --no-sala variant (it would re-run on the main model weights).
+    if ablation is None and not args.no_sala:
         logger.info("Starting Ablation Study execution...")
         ablation_path = os.path.join(config.PLOTS_DIR, "ablation_study_bar.png")
         try:

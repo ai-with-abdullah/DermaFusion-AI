@@ -36,13 +36,15 @@ from utils.seed import seed_everything
 from utils.logger import setup_logger
 
 # Multi-dataset loader (falls back to HAM10000 if others not downloaded)
-from datasets.unified_dataset import get_unified_dataloaders, get_class_weights_from_records
+from datasets.unified_dataset import (
+    get_unified_dataloaders, get_class_weights_from_records, get_source_class_priors,
+)
 
 from datasets.mixup import mixup_data, mixup_criterion
 from models.dual_branch_fusion import DualBranchFusionClassifier
 from models.transformer_unet import SwinTransformerUNet
 from models.unet import LightweightUNet
-from training.losses import get_combined_class_loss
+from training.losses import get_combined_class_loss, get_sala_loss
 from evaluation.metrics import compute_metrics, log_metrics
 from training.train_utils import AverageMeter, EarlyStopping, apply_mask, ModelEMA
 
@@ -146,19 +148,22 @@ class WarmupCosineScheduler:
 
     def load_state_dict(self, d):
         self._epoch = d['_epoch']
-        # Bug #8 fix: Do NOT restore base_lrs from checkpoint.
-        # The optimizer's current param_groups already have correct LRs after
-        # loading the optimizer state dict. Re-reading base_lrs from checkpoint
-        # overwrites them with potentially stale values from a different epoch.
-        # We refresh base_lrs from the live optimizer state instead.
-        self.base_lrs = [pg['lr'] for pg in self.optimizer.param_groups]
+        # Bug #6 fix: restore the ORIGINAL (unscaled) base LRs from the checkpoint.
+        # The resume order is optimizer.load_state_dict() THEN scheduler.load_state_dict().
+        # The optimizer load overwrites param_groups['lr'] with the SCALED LRs from the
+        # saved epoch, so re-reading base_lrs from the optimizer here captured already
+        # decayed values — every later step() then re-applied cosine decay on top of
+        # them, shrinking the LR geometrically across each resume (frequent on Kaggle's
+        # weekly quota resets). state_dict() persists the true base_lrs; use them.
+        if 'base_lrs' in d:
+            self.base_lrs = list(d['base_lrs'])
 
 
 # =========================================================================== #
 #                        TRAINING LOOP                                         #
 # =========================================================================== #
 
-def train_one_epoch(model, ema, unet, loader, criterion, optimizer, scaler, device, accumulation_steps=1, ablation=None):
+def train_one_epoch(model, ema, unet, loader, loss_call, optimizer, scaler, device, accumulation_steps=1, ablation=None):
     model.train()
     unet.eval()
 
@@ -172,6 +177,7 @@ def train_one_epoch(model, ema, unet, loader, criterion, optimizer, scaler, devi
     for i, batch in enumerate(pbar):
         images = batch['image'].to(device)
         labels = batch['label'].to(device)
+        source_ids = batch['source_id'].to(device)          # SALA per-sample source
 
         # ── Decide augmentation: MixUp or CutMix (not both) ─────────────── #
         use_mixup  = config.MIXUP_ALPHA  > 0 and np.random.rand() > 0.6
@@ -185,32 +191,42 @@ def train_one_epoch(model, ema, unet, loader, criterion, optimizer, scaler, devi
             with autocast('cuda', enabled=(device == 'cuda')):
                 mask_logits = unet(images)             # segment ORIGINAL images
                 images_seg  = apply_mask(images, mask_logits)
+        # Soft lesion-probability map for the spatial fusion (Novelties #2/#3).
+        mask_prob = torch.sigmoid(mask_logits.float())
 
         # ── Now apply MixUp/CutMix to BOTH images and images_seg ─────── #
         # FIX #1: Use the SAME permutation idx (MixUp) and the SAME bounding
         # box (CutMix) for both branches so EVA-02 and ConvNeXt always see
         # aligned mixed inputs. Previously a second independent randperm / a
         # second cutmix_data call produced completely different blends.
+        # The mask_prob is mixed with the SAME idx/bbox so it stays aligned with
+        # the mixed images; source_ids[idx] gives the second sample's source.
         if use_mixup and not use_cutmix:
             lam = np.random.beta(config.MIXUP_ALPHA, config.MIXUP_ALPHA)
             lam = max(lam, 1.0 - lam)           # keep dominant class ≥50%
             batch_size = images.size(0)
             idx = torch.randperm(batch_size, device=images.device)
 
-            # Apply SAME lam + SAME idx to BOTH branches
+            # Apply SAME lam + SAME idx to BOTH branches + the mask
             images    = lam * images    + (1 - lam) * images[idx]
             images_seg = lam * images_seg + (1 - lam) * images_seg[idx]
+            mask_prob = lam * mask_prob + (1 - lam) * mask_prob[idx]
 
             targets_a, targets_b = labels, labels[idx]
-            mix_fn = lambda logits: mixup_criterion(criterion, logits, targets_a, targets_b, lam)
+            src_a, src_b = source_ids, source_ids[idx]
+            mix_fn = lambda logits: (lam * loss_call(logits, targets_a, src_a)
+                                     + (1 - lam) * loss_call(logits, targets_b, src_b))
 
         elif use_cutmix and not use_mixup:
             # cutmix_data now returns (mixed, ta, tb, lam, idx, bbox) — Fix #1
             images, targets_a, targets_b, lam, idx, (x1, y1, x2, y2) = \
                 cutmix_data(images, labels, config.CUTMIX_ALPHA)
-            # Apply the EXACT same idx + bbox to images_seg
+            # Apply the EXACT same idx + bbox to images_seg and the mask
             images_seg = apply_cutmix_bbox(images_seg, images_seg[idx], x1, y1, x2, y2)
-            mix_fn = lambda logits: cutmix_criterion(criterion, logits, targets_a, targets_b, lam)
+            mask_prob  = apply_cutmix_bbox(mask_prob, mask_prob[idx], x1, y1, x2, y2)
+            src_a, src_b = source_ids, source_ids[idx]
+            mix_fn = lambda logits: (lam * loss_call(logits, targets_a, src_a)
+                                     + (1 - lam) * loss_call(logits, targets_b, src_b))
         else:
             mix_fn = None
 
@@ -244,12 +260,12 @@ def train_one_epoch(model, ema, unet, loader, criterion, optimizer, scaler, devi
                 combined = raw_m.gate(fused, feat_eva, feat_conv)
                 logits = raw_m.classifier(combined)
             else: # Full Model / no_tta
-                logits, _ = model(images, images_seg)
+                logits, _ = model(images, images_seg, mask_prob)
 
             if mix_fn is not None:
                 loss = mix_fn(logits)
             else:
-                loss = criterion(logits, labels)
+                loss = loss_call(logits, labels, source_ids)
 
             loss = loss / accumulation_steps
 
@@ -285,7 +301,7 @@ def train_one_epoch(model, ema, unet, loader, criterion, optimizer, scaler, devi
     return losses.avg, metrics
 
 
-def validate(model, unet, loader, criterion, device, ablation=None):
+def validate(model, unet, loader, loss_call, device, ablation=None):
     model.eval()
     unet.eval()
 
@@ -298,6 +314,7 @@ def validate(model, unet, loader, criterion, device, ablation=None):
         for batch in pbar:
             images = batch['image'].to(device)
             labels = batch['label'].to(device)
+            source_ids = batch['source_id'].to(device)
 
             with autocast('cuda', enabled=(device == 'cuda')):
                 # Unwrap DataParallel if wrapped
@@ -334,9 +351,10 @@ def validate(model, unet, loader, criterion, device, ablation=None):
                 else: # Full Model / no_tta
                     mask_logits = unet(images)
                     images_seg  = apply_mask(images, mask_logits)
-                    logits, _   = model(images, images_seg)
-                    
-                loss        = criterion(logits, labels)
+                    mask_prob   = torch.sigmoid(mask_logits.float())
+                    logits, _   = model(images, images_seg, mask_prob)
+
+                loss        = loss_call(logits, labels, source_ids)
 
             losses.update(loss.item(), images.size(0))
 
@@ -360,6 +378,9 @@ def main():
     parser.add_argument("--ablation", type=str, default=None,
                         choices=["no_tta", "convnext_only", "eva_only", "no_attention", "no_segmentation"],
                         help="Ablation configuration to train")
+    parser.add_argument("--no-sala", action="store_true", dest="no_sala",
+                        help="Train WITHOUT Source-Aware Logit Adjustment (Novelty #1 ablation). "
+                             "Saves to a *_nosala checkpoint so the main model is not overwritten.")
     args = parser.parse_args()
     ablation = args.ablation
 
@@ -421,6 +442,8 @@ def main():
         num_heads=config.FUSION_NUM_HEADS,
         num_classes=config.NUM_CLASSES,
         dropout=config.FUSION_DROPOUT,
+        use_spatial_fusion=getattr(config, 'USE_SPATIAL_FUSION', True),
+        fusion_grid=getattr(config, 'FUSION_GRID', 14),
     ).to(config.DEVICE)
 
     # ── Gradient Checkpointing: trade compute for memory ─────────────────── #
@@ -551,27 +574,57 @@ def main():
         weight_decay=config.WEIGHT_DECAY,
     )
 
-    # ── LR warmup + Cosine scheduler ───────────────────────────────────── #
+    # ── Loss: Combined (LabelSmoothing Focal + SCE) ─────────────────────── #
+    class_weights = get_class_weights_from_records(train_records)
+    base_criterion = get_combined_class_loss(
+        class_weights, config.DEVICE, config.NUM_CLASSES, config.LABEL_SMOOTHING
+    )
+
+    # ── Novelty #1: Source-Aware Logit Adjustment wraps the base loss ────── #
+    # NOTE: the SALA margin param group is added BEFORE the scheduler is built,
+    # so WarmupCosineScheduler captures it in base_lrs and warms/decays it too.
+    use_sala = getattr(config, 'USE_SALA', True) and not args.no_sala
+    if args.no_sala:
+        logger.info("  [SALA] DISABLED via --no-sala (Novelty #1 ablation run)")
+    if use_sala:
+        source_priors = get_source_class_priors(train_records).to(config.DEVICE)
+        criterion = get_sala_loss(
+            source_priors, base_criterion,
+            tau=getattr(config, 'SALA_TAU', 1.0),
+            learnable=getattr(config, 'SALA_LEARNABLE', True),
+        )
+        # The learnable per-source margins are nn.Parameters and MUST be optimized,
+        # or they stay frozen at log π^(d). Add them to the optimizer's head group.
+        if getattr(config, 'SALA_LEARNABLE', True):
+            optimizer.add_param_group({'params': [criterion.margin], 'lr': config.HEAD_LR})
+        logger.info(f"  [SALA] enabled (tau={criterion.tau}, learnable={criterion.learnable}); "
+                    f"per-source margins initialised from train log-priors")
+    else:
+        criterion = base_criterion
+
+    # ── LR warmup + Cosine scheduler (built after all param groups exist) ── #
     scheduler = WarmupCosineScheduler(
         optimizer,
         warmup_epochs=config.WARMUP_EPOCHS,
         total_epochs=config.EPOCHS,
     )
 
-    # ── Loss: Combined (LabelSmoothing Focal + SCE) ─────────────────────── #
-    class_weights = get_class_weights_from_records(train_records)
-    criterion     = get_combined_class_loss(
-        class_weights, config.DEVICE, config.NUM_CLASSES, config.LABEL_SMOOTHING
-    )
+    # Uniform loss interface: always called as loss_call(logits, targets, source_ids).
+    # SALA consumes source_ids; the plain base loss ignores them.
+    if use_sala:
+        def loss_call(logits, targets, src): return criterion(logits, targets, src)
+    else:
+        def loss_call(logits, targets, src): return criterion(logits, targets)
 
     scaler = GradScaler('cuda', enabled=(config.DEVICE == 'cuda'))
 
+    sala_tag = "_nosala" if args.no_sala else ""
     if ablation:
-        best_filename = f"best_classifier_{ablation}.pth"
-        resume_filename = f"resume_checkpoint_{ablation}.pth"
+        best_filename = f"best_classifier_{ablation}{sala_tag}.pth"
+        resume_filename = f"resume_checkpoint_{ablation}{sala_tag}.pth"
     else:
-        best_filename = "best_dual_branch_fusion.pth"
-        resume_filename = "resume_checkpoint.pth"
+        best_filename = f"best_dual_branch_fusion{sala_tag}.pth"
+        resume_filename = f"resume_checkpoint{sala_tag}.pth"
 
     best_model_path = os.path.join(config.WEIGHTS_DIR, best_filename)
     early_stopping  = EarlyStopping(
@@ -592,6 +645,10 @@ def main():
         scheduler.load_state_dict(ckpt['scheduler'])
         if ema is not None and 'ema_shadow' in ckpt:
             ema.shadow = ckpt['ema_shadow']
+        # Restore learned SALA per-source margins (they live in the criterion,
+        # NOT the model, so without this they reset to log π^(d) every resume).
+        if use_sala and 'criterion' in ckpt and ckpt['criterion'] is not None:
+            criterion.load_state_dict(ckpt['criterion'])
         start_epoch = ckpt['epoch'] + 1
         history      = ckpt.get('history', [])
         early_stopping.best_score = ckpt.get('best_score', None)
@@ -611,14 +668,14 @@ def main():
         logger.info(f"\nEpoch {epoch}/{config.EPOCHS}  |  LR: {current_lrs[-1]:.2e} (head)")
 
         train_loss, train_metrics = train_one_epoch(
-            model, ema, unet, train_loader, criterion, optimizer, scaler,
+            model, ema, unet, train_loader, loss_call, optimizer, scaler,
             config.DEVICE, config.GRADIENT_ACCUMULATION_STEPS, ablation=ablation
         )
 
         # Validate using EMA weights for stability, then RESTORE training weights
         if ema is not None:
             ema.apply_shadow(model)          # swap in EMA weights
-        val_loss, val_metrics = validate(model, unet, val_loader, criterion, config.DEVICE, ablation=ablation)
+        val_loss, val_metrics = validate(model, unet, val_loader, loss_call, config.DEVICE, ablation=ablation)
         if ema is not None:
             ema.restore(model)               # restore real training weights!
 
@@ -659,6 +716,8 @@ def main():
         }
         if ema is not None:
             ckpt['ema_shadow'] = ema.shadow
+        if use_sala:
+            ckpt['criterion'] = criterion.state_dict()   # learned SALA margins
         torch.save(ckpt, resume_path)
         logger.info(f"[CHECKPOINT] Saved epoch {epoch} → {resume_path}")
 

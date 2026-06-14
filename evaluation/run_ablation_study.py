@@ -114,10 +114,36 @@ def evaluate_config(model, unet, loader, device, config_name, n_views=5):
                     combined = model.gate(fused, feat_eva, feat_conv)
                     logits = model.classifier(combined)
                     
+                elif config_name == "Ablation 6: No Uncertainty Bias":
+                    # Novelty #2 ablation: BUG-Attn with γ=δ off → plain spatial attn
+                    mask_logits = unet(aug_images)
+                    images_seg  = apply_mask(aug_images, mask_logits)
+                    mask_prob   = torch.sigmoid(mask_logits.float())
+                    logits, _ = model(aug_images, images_seg, mask_prob,
+                                      disable_uncertainty_bias=True)
+
+                elif config_name == "Ablation 7: No Mirror-Asymmetry":
+                    # Novelty #3 ablation: turn off the asymmetry contribution
+                    mask_logits = unet(aug_images)
+                    images_seg  = apply_mask(aug_images, mask_logits)
+                    mask_prob   = torch.sigmoid(mask_logits.float())
+                    logits, _ = model(aug_images, images_seg, mask_prob,
+                                      disable_asymmetry=True)
+
+                elif config_name == "Ablation 8: Plain Spatial Fusion":
+                    # Both novelties #2+#3 off → plain spatial cross-attention
+                    # (the arXiv:2510.17773-equivalent base design)
+                    mask_logits = unet(aug_images)
+                    images_seg  = apply_mask(aug_images, mask_logits)
+                    mask_prob   = torch.sigmoid(mask_logits.float())
+                    logits, _ = model(aug_images, images_seg, mask_prob,
+                                      disable_uncertainty_bias=True, disable_asymmetry=True)
+
                 else: # Ablation 1 (No TTA, n_views=1) or Full Model (n_views=5)
                     mask_logits = unet(aug_images)
                     images_seg = apply_mask(aug_images, mask_logits)
-                    logits, _ = model(aug_images, images_seg)
+                    mask_prob  = torch.sigmoid(mask_logits.float())
+                    logits, _ = model(aug_images, images_seg, mask_prob)
             
             probs = torch.softmax(logits, dim=1).cpu().float().numpy()
             batch_probs_views.append(probs)
@@ -238,6 +264,10 @@ def main():
         {"name": "Ablation 3: EVA-02 Only", "n_views": 5},
         {"name": "Ablation 4: No Cross-Attention", "n_views": 5},
         {"name": "Ablation 5: No Segmentation", "n_views": 5},
+        # Novelty ablations (eval-time toggles on the SAME trained full model):
+        {"name": "Ablation 6: No Uncertainty Bias", "n_views": 5},   # Novelty #2 off
+        {"name": "Ablation 7: No Mirror-Asymmetry", "n_views": 5},   # Novelty #3 off
+        {"name": "Ablation 8: Plain Spatial Fusion", "n_views": 5},  # #2 + #3 off
         {"name": "Full Model", "n_views": 5},
     ]
     

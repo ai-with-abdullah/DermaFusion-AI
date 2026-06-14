@@ -141,6 +141,17 @@ class ConvNeXtV3Backbone(nn.Module):
 
         return feat, projected_feats
 
+    def forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Return the SPATIAL feature grid (B, C, H, W) from the ConvNeXt backbone,
+        BEFORE pooling/projection. timm ConvNeXt.forward_features already returns
+        a 4D map. Used by DualBranchFusionClassifier's spatial fusion path.
+        """
+        grid = self.backbone.forward_features(x)            # (B, C, H, W)
+        if grid.dim() != 4:
+            raise RuntimeError(f"Expected 4D ConvNeXt feature map, got {grid.shape}")
+        return grid
+
     def get_backbone_params(self):
         """Returns backbone parameters for differential learning rate."""
         return list(self.backbone.parameters())

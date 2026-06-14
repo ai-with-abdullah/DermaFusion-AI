@@ -216,6 +216,84 @@ class AsymmetricMelFocalLoss(nn.Module):
 
 
 # =========================================================================== #
+#        NOVELTY 1 — SOURCE-AWARE LOGIT ADJUSTMENT (SALA)                      #
+# =========================================================================== #
+
+class SourceAwareLogitAdjustment(nn.Module):
+    """
+    Source-Aware Logit Adjustment (SALA).
+
+    PROBLEM. We train on 6 datasets with very different class priors (HAM ≈ 67%
+    nv; ISIC2020 mel-only; ISIC2024 ≈ 1:10; PH2 3-class). The aggregate prior
+    matches no real deployment distribution, and — worse — the source identity is
+    correlated with the label, so the network can exploit acquisition artifacts
+    ("this came from ISIC2020 ⇒ melanoma") instead of lesion biology. This is the
+    documented multi-source spurious-correlation failure (When More is Less,
+    arXiv:2308.04431) and the reason cross-domain (smartphone) AUC collapses.
+
+    METHOD. Standard logit adjustment (Menon et al., ICLR 2021) adds ONE global
+    class-prior margin: z_y + τ·log π_y. We make the margin SOURCE-conditional and
+    LEARNABLE: for a sample from source d,
+
+        ẑ_y = z_y + τ · m_y^(d) ,   m^(d) initialised at log π_y^(d)
+
+    Subtracting each source's own class-prior bias during training forces the raw
+    logits z to be explained by lesion content, not source identity → source-
+    invariant features. At inference the raw logits z are used directly (they are
+    already prior-removed per source), so no test-time change is needed for a
+    balanced target; for a known clinical prevalence π_target, add τ·log π_target.
+
+    DELTA vs nearest prior work:
+      - Menon 2021: single global, fixed prior.        SALA: per-source.
+      - Robust Multi-Source COVID (arXiv:2604.03320):  per-source PROPORTION p(d),
+                                                        fixed.  SALA: per-source ×
+                                                        per-CLASS prior, LEARNABLE.
+      - Dynamic Learnable LA (TCSVT 2024):             single-distribution, batch-
+                                                        local.  SALA: per-source.
+
+    NOTE: the learnable margin is an nn.Parameter and MUST be added to the
+    optimizer (see train_classifier.py), or it stays frozen at log π^(d).
+
+    Args:
+        source_priors: (D_sources, C) tensor, each row a class-prior distribution
+                       for one source (rows should sum to 1).
+        base_loss:     the underlying classification loss applied to ADJUSTED
+                       logits (e.g. CombinedClassLoss).
+        tau:           adjustment strength (1.0 = standard).
+        learnable:     if True, margins are refined by gradient from log π^(d).
+    """
+
+    def __init__(self, source_priors: torch.Tensor, base_loss: nn.Module,
+                 tau: float = 1.0, learnable: bool = True):
+        super().__init__()
+        init = torch.log(source_priors.clamp(min=1e-8))      # (D, C) = log π^(d)
+        if learnable:
+            self.margin = nn.Parameter(init.clone())
+        else:
+            self.register_buffer('margin', init.clone())
+        self.base_loss = base_loss
+        self.tau       = tau
+        self.learnable = learnable
+
+    def adjust(self, logits: torch.Tensor, source_ids: torch.Tensor) -> torch.Tensor:
+        """Add the per-sample source margin to the logits. source_ids: (B,) long."""
+        return logits + self.tau * self.margin[source_ids]
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor,
+                source_ids: torch.Tensor) -> torch.Tensor:
+        return self.base_loss(self.adjust(logits, source_ids), targets)
+
+    def get_learned_margins(self) -> torch.Tensor:
+        return self.margin.detach().cpu()
+
+
+def get_sala_loss(source_priors, base_loss, tau: float = 1.0,
+                  learnable: bool = True) -> SourceAwareLogitAdjustment:
+    """Factory wrapping a base classification loss with Source-Aware Logit Adjustment."""
+    return SourceAwareLogitAdjustment(source_priors, base_loss, tau=tau, learnable=learnable)
+
+
+# =========================================================================== #
 #                   LEGACY (kept for backward compatibility)                   #
 # =========================================================================== #
 

@@ -1,0 +1,54 @@
+2026-06-05 07:05:57,056 INFO Starting Dual-Branch Fusion Evaluation (TTA enabled)
+2026-06-05 07:06:02,890 INFO Loaded UNet weights from /Users/macintosh/Desktop/DermaFusion/outputs/weights/best_unet.pth
+2026-06-05 07:06:18,093 INFO Loaded classifier weights from /Users/macintosh/Desktop/DermaFusion/outputs/weights/best_dual_branch_fusion.pth
+2026-06-05 07:06:18,093 INFO Running inference with TTA (n_views=5)...
+2026-06-05 07:19:25,899 INFO Temperature scaling SKIPPED — TTA (n_views=5) averages post-softmax probabilities. Applying temperature to averaged probs is mathematically incorrect. Run evaluation/calibration.py on val set (n_views=1) for proper calibration.
+2026-06-05 07:19:26,009 INFO 
+============================================================
+2026-06-05 07:19:26,010 INFO   Test (TTA, calibrated) Metrics Summary
+2026-06-05 07:19:26,010 INFO ============================================================
+2026-06-05 07:19:26,010 INFO   Accuracy          : 0.2000
+2026-06-05 07:19:26,010 INFO   Balanced Accuracy : 0.1429
+2026-06-05 07:19:26,010 INFO   Macro F1          : 0.0476
+2026-06-05 07:19:26,010 INFO   Weighted F1       : 0.0667
+2026-06-05 07:19:26,010 INFO   Macro AUC         : 0.5671
+2026-06-05 07:19:26,011 INFO   ECE (↓ better)    : 0.4201
+2026-06-05 07:19:26,011 INFO   pAUC@80%TPR       : 0.0000
+2026-06-05 07:19:26,011 INFO   Per-class F1:
+2026-06-05 07:19:26,012 INFO     akiec   : 0.0000
+2026-06-05 07:19:26,012 INFO     bcc     : 0.0000
+2026-06-05 07:19:26,012 INFO     bkl     : 0.0000
+2026-06-05 07:19:26,012 INFO     df      : 0.0000
+2026-06-05 07:19:26,013 INFO     mel     : 0.0000
+2026-06-05 07:19:26,013 INFO     nv      : 0.3333
+2026-06-05 07:19:26,013 INFO     vasc    : 0.0000
+2026-06-05 07:19:26,013 INFO   Per-class Sensitivity:
+2026-06-05 07:19:26,013 INFO     akiec   : 0.0000
+2026-06-05 07:19:26,014 INFO     bcc     : 0.0000
+2026-06-05 07:19:26,014 INFO     bkl     : 0.0000
+2026-06-05 07:19:26,014 INFO     df      : 0.0000
+2026-06-05 07:19:26,014 INFO     mel     : 0.0000
+2026-06-05 07:19:26,014 INFO     nv      : 1.0000
+2026-06-05 07:19:26,014 INFO     vasc    : 0.0000
+2026-06-05 07:19:26,015 INFO   Per-class Specificity:
+2026-06-05 07:19:26,015 INFO     akiec   : 1.0000
+2026-06-05 07:19:26,015 INFO     bcc     : 1.0000
+2026-06-05 07:19:26,015 INFO     bkl     : 1.0000
+2026-06-05 07:19:26,015 INFO     df      : 1.0000
+2026-06-05 07:19:26,015 INFO     mel     : 1.0000
+2026-06-05 07:19:26,015 INFO     nv      : 0.0000
+2026-06-05 07:19:26,015 INFO     vasc    : 1.0000
+2026-06-05 07:19:26,015 INFO ============================================================
+
+2026-06-05 07:19:26,016 INFO Generating GradCAM++ XAI visualizations...
+2026-06-05 07:27:31,806 INFO Generating confusion matrix and ROC curves...
+2026-06-05 07:27:32,766 INFO [DiagnosticOnly] Mel sensitivity @ standard threshold: 0.0000 | with 1.5× boost (lower threshold): 0.0000  (primary predictions above are UNAFFECTED by this boost)
+2026-06-05 07:27:32,766 INFO Evaluation complete. Outputs saved → /Users/macintosh/Desktop/DermaFusion/outputs
+2026-06-05 08:52:49,950 INFO Starting Dual-Branch Fusion Evaluation (TTA enabled)
+2026-06-05 08:52:55,420 INFO Loaded UNet weights from /Users/macintosh/Desktop/DermaFusion/outputs/weights/best_unet.pth
+2026-06-05 08:53:11,074 INFO Loaded classifier weights from /Users/macintosh/Desktop/DermaFusion/outputs/weights/best_dual_branch_fusion.pth
+2026-06-05 08:53:11,074 INFO Running inference with TTA (n_views=5)...
+2026-06-05 09:27:13,055 INFO Starting Dual-Branch Fusion Evaluation (TTA enabled)
+2026-06-05 09:27:18,517 INFO Loaded UNet weights from /Users/macintosh/Desktop/DermaFusion/outputs/weights/best_unet.pth
+2026-06-05 09:27:33,306 INFO Loaded classifier weights from /Users/macintosh/Desktop/DermaFusion/outputs/weights/best_dual_branch_fusion.pth
+2026-06-05 09:27:33,306 INFO Running inference with TTA (n_views=5)...

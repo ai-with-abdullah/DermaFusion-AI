@@ -48,6 +48,36 @@ class Sota2025Backbone(nn.Module):
         features = self.backbone(x)
         return features
 
+    def _resize_to_native(self, x):
+        if "eva02" in self.backbone.default_cfg.get('architecture', ''):
+            target_size = self.backbone.default_cfg['input_size'][-2:]
+            if x.shape[-2:] != target_size:
+                x = torch.nn.functional.interpolate(
+                    x, size=target_size, mode='bicubic', align_corners=False
+                )
+        return x
+
+    def forward_tokens(self, x):
+        """
+        Return the SPATIAL patch-token grid (B, C, G, G) for spatial fusion.
+
+        EVA-02 is a ViT, so forward_features() gives (B, T, C) including prefix
+        (cls/reg) tokens; we drop the prefix tokens and reshape the remaining
+        N = G×G patch tokens into a grid. Used by DualBranchFusionClassifier's
+        spatial Lesion-Aware fusion path.
+        """
+        x = self._resize_to_native(x)
+        feats = self.backbone.forward_features(x)          # (B, T, C)
+        if feats.dim() == 4:
+            # Some timm configs already return (B, C, H, W) — pass through.
+            return feats
+        n_prefix = getattr(self.backbone, 'num_prefix_tokens', 1)
+        feats = feats[:, n_prefix:, :]                      # (B, N, C)
+        B, N, C = feats.shape
+        G = int(round(N ** 0.5))
+        assert G * G == N, f"EVA token count {N} is not a perfect square grid"
+        return feats.transpose(1, 2).reshape(B, C, G, G)    # (B, C, G, G)
+
     # NOTE: Feature projection (backbone_dim → fusion_dim) is handled by
     # DualBranchFusionClassifier.proj_eva using a trained nn.Linear.
     # project_to_dim() has been removed — it created a new untrained Linear

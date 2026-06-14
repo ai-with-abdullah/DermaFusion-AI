@@ -143,7 +143,8 @@ class TTAInference:
                 else: # Full Model / no_tta
                     mask_logits = self.unet(aug_images)
                     images_seg  = apply_mask(aug_images, mask_logits)
-                    logits, _ = self.model(aug_images, images_seg)
+                    mask_prob   = torch.sigmoid(mask_logits.float())
+                    logits, _ = self.model(aug_images, images_seg, mask_prob)
 
             probs = torch.softmax(logits, dim=1).cpu().float().numpy()  # (B, C)
             all_probs.append(probs)

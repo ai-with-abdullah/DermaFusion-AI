@@ -111,6 +111,15 @@ class Config:
     FUSION_NUM_HEADS = 8
     FUSION_DROPOUT   = 0.2
 
+    # ── Lesion-Aware Spatial Fusion (Novelties #2 + #3) ──────────────────── #
+    USE_SPATIAL_FUSION = True   # spatial token grids + BUG-Attn + Mirror-Asymmetry
+    FUSION_GRID        = 14     # common G×G lattice both backbones are pooled to
+
+    # ── Source-Aware Logit Adjustment (Novelty #1) ───────────────────────── #
+    USE_SALA       = True
+    SALA_TAU       = 1.0        # adjustment strength (Menon's τ); 0 disables (ablation)
+    SALA_LEARNABLE = True       # refine per-source margins from log π^(d) by gradient
+
     # Head
     HEAD_LR      = 1e-4
     WEIGHT_DECAY = 0.05

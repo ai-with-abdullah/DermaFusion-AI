@@ -189,11 +189,22 @@ class EarlyStopping:
             )
 
         if ema is not None:
-            # Build a proper state_dict from EMA shadow (excluding buffer keys)
-            ema_state = {
-                k: v for k, v in ema.shadow.items()
-                if not k.startswith('__buf__')
-            }
+            # Build a COMPLETE state_dict that loads with strict=True.
+            #
+            # Bug #8 fix: previously the saved checkpoint dropped every '__buf__'
+            # key, so BatchNorm running_mean/running_var (and num_batches_tracked)
+            # were absent. Loading it with strict=True failed; with strict=False
+            # the BN stats fell back to random init → degraded inference.
+            #
+            # We now start from the live model's full state_dict (guarantees every
+            # key exists, including any non-trainable params) and overlay the EMA
+            # shadow values. Shadow params are keyed by their plain name; shadow
+            # buffers are keyed as '__buf__<name>' — strip the prefix to realign.
+            ema_state = {k: v.clone() for k, v in model.state_dict().items()}
+            for k, v in ema.shadow.items():
+                key = k[len('__buf__'):] if k.startswith('__buf__') else k
+                if key in ema_state:
+                    ema_state[key] = v.to(ema_state[key].device)
             torch.save(ema_state, self.path)
         else:
             torch.save(model.state_dict(), self.path)
