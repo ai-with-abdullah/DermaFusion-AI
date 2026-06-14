@@ -463,21 +463,27 @@ def _parse_isic2024(data_dir: str) -> List[SkinLesionRecord]:
     # Use real patient_id if available (prevents same patient in train+test)
     has_patient_col = 'patient_id' in df.columns
 
+    # Bug #7 fix (perf-safe): skip rows whose image file is absent so __getitem__
+    # never substitutes a BLACK image with a real label. Previously this used
+    # os.path.exists() PER ROW — 401K network stat calls on Kaggle's cold NFS, a
+    # 10+ minute silent stall. Instead list the directory ONCE and test membership
+    # in an in-memory set (O(1) per row): ~seconds instead of minutes.
+    try:
+        existing = set(os.listdir(img_dir))
+    except OSError:
+        existing = set()
+
     missing_count = 0
     for row in df.itertuples(index=False):  # itertuples: 10-100x faster than iterrows (401K rows!)
         label_str = 'mel' if int(row.target) == 1 else 'nv'
-        img_path = os.path.join(img_dir, f"{getattr(row, id_col)}.jpg")
-
-        # Bug #7 fix: skip rows whose image file is absent. Previously these were
-        # appended anyway; __getitem__ then substituted a BLACK image with the real
-        # label, silently poisoning training with mislabeled blank samples.
-        if not os.path.exists(img_path):
+        fname = f"{getattr(row, id_col)}.jpg"
+        if fname not in existing:
             missing_count += 1
             continue
 
         pid = str(row.patient_id) if has_patient_col else str(getattr(row, id_col))
         records.append(SkinLesionRecord(
-            image_path=img_path,
+            image_path=os.path.join(img_dir, fname),
             label_idx=cls_map[label_str],
             patient_id=pid,
             dataset_name='ISIC2024',
@@ -808,16 +814,24 @@ def get_unified_dataloaders(data_dir: str, masks_dir: Optional[str] = None, batc
     print("[UnifiedDataset] Scanning available datasets...")
 
     all_records: List[SkinLesionRecord] = []
-
-    all_records += _parse_ham10000(data_dir, masks_dir)
-    all_records += _parse_isic2019(data_dir)
-    all_records += _parse_isic2020(data_dir)
     import gc
-    gc.collect()
 
-    all_records += _parse_isic2024(data_dir)
-    all_records += _parse_ph2(data_dir)
-    all_records += _parse_ddi(data_dir)
+    if segmentation_only:
+        # Only HAM10000 and PH2 carry segmentation masks. Parsing the mask-less
+        # datasets here is pure waste — and ISIC2024's 401K-row existence scan over
+        # Kaggle's cold NFS stalled the seg run for 10+ minutes with no output.
+        # Skip them entirely for segmentation.
+        print("  [segmentation_only] Parsing only mask-bearing datasets (HAM10000, PH2).")
+        all_records += _parse_ham10000(data_dir, masks_dir)
+        all_records += _parse_ph2(data_dir)
+    else:
+        all_records += _parse_ham10000(data_dir, masks_dir)
+        all_records += _parse_isic2019(data_dir)
+        all_records += _parse_isic2020(data_dir)
+        gc.collect()
+        all_records += _parse_isic2024(data_dir)
+        all_records += _parse_ph2(data_dir)
+        all_records += _parse_ddi(data_dir)
     gc.collect()
 
     if len(all_records) == 0:
