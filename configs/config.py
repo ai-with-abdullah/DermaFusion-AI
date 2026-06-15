@@ -52,18 +52,18 @@ class Config:
     SEED         = 42
     DEVICE       = "cuda" if torch.cuda.is_available() else "cpu"
     NUM_WORKERS  = 1      # Set to 1 to prevent RAM OOM (cuts worker memory footprint in half on Kaggle)
-    EPOCHS       = 15     # 25 was overkill for fine-tuning pretrained backbones; 15 fits the
-                          # weekly GPU quota and converges fine (early stopping still guards).
+    EPOCHS       = 12     # Fine-tuning pretrained backbones converges fast; 12 epochs at
+                          # ~2h43m each ≈ 33h fits within ~1 weekly quota + a resume session.
     PATIENCE     = 15     # Match EarlyStopping call in train_classifier.py
-    BATCH_SIZE     = 4    # 2 per GPU across 2× T4 → DataParallel engages BOTH GPUs (~2× faster
-                          # wall-clock). Gradient checkpointing keeps 2 imgs/GPU within 15GB.
-                          # ⚠ If you see CUDA OOM in the first ~50 steps, set this back to 2
-                          #   (single GPU) and lower EPOCHS to 12.
+    BATCH_SIZE     = 2    # SINGLE GPU is FASTER here than DataParallel: DP re-copies the full
+                          # 405M model to both T4s every step (~3.6 s/it), making batch=4/2-GPU
+                          # ~2× SLOWER (5h14m/epoch) than single-GPU batch=2 (2h43m/epoch).
+                          # batch=2 → per_gpu_batch 1 < 2 → DP guard skips → single GPU. Keep it.
     SEG_BATCH_SIZE = 4    # Swin-Tiny U-Net at IMAGE_SIZE=448 (not 224): batch=4 is OOM-safe on T4.
                           # Raise to 6-8 only if `nvidia-smi` shows spare memory during seg training.
     VAL_BATCH_SIZE = 8    # Val loads BOTH UNet (95M) + classifier (405M) on GPU; 16 risks OOM at 448px.
                           # No gradients, so 8 is still fast. Raise if memory allows.
-    GRADIENT_ACCUMULATION_STEPS = 16   # Effective batch = 64 (batch=4 × accum=16) — unchanged dynamics
+    GRADIENT_ACCUMULATION_STEPS = 32   # Effective batch = 64 (batch=2 × accum=32)
 
 
     # =========================================================================
