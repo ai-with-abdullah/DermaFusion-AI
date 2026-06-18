@@ -52,7 +52,7 @@ class Config:
     SEED         = 42
     DEVICE       = "cuda" if torch.cuda.is_available() else "cpu"
     NUM_WORKERS  = 1      # Set to 1 to prevent RAM OOM (cuts worker memory footprint in half on Kaggle)
-    EPOCHS       = 12     # Fine-tuning pretrained backbones converges fast; 12 epochs at
+    EPOCHS       = 15     # Fine-tuning pretrained backbones converges fast; 12 epochs at
                           # ~2h43m each ≈ 33h fits within ~1 weekly quota + a resume session.
     PATIENCE     = 15     # Match EarlyStopping call in train_classifier.py
     BATCH_SIZE     = 2    # SINGLE GPU is FASTER here than DataParallel: DP re-copies the full
