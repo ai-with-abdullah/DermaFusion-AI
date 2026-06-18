@@ -664,7 +664,7 @@ def generate_mamba_attention_diagnostic(
         
         # Top bar: title and metadata
         title_str = (
-            f"Mamba-Attention Diagnostic  |  Image: {image_id}\n"
+            f"Dual-Branch Attention Diagnostic  |  Image: {image_id}\n"
             f"GT: {gt_name.upper()}  ·  Pred: {pred_name.upper()}  ·  Confidence: {conf_str}"
         )
         fig.suptitle(title_str, fontsize=15, color="#ffec5c",
@@ -677,8 +677,8 @@ def generate_mamba_attention_diagnostic(
         
         panels_row1 = [
             (img_rgb,       "Original Image",              None),
-            (mamba_blend,   "Mamba SSM Activations",       "[patch token L2-norm]"),
-            (gradcam_blend, "ConvNeXt V3 GradCAM",         f"[class: {gt_name}]"),
+            (mamba_blend,   "EVA-02 Attention",            "[patch token L2-norm]"),
+            (gradcam_blend, "ConvNeXt V2 GradCAM++",       f"[class: {gt_name}]"),
         ]
         
         for col, (img, title, subtitle) in enumerate(panels_row1):
@@ -707,8 +707,8 @@ def generate_mamba_attention_diagnostic(
         ax_bar.grid(axis="y", color="#222222", linewidth=0.5)
         
         panels_row2 = [
-            (rollout_blend, "Mamba Layer Rollout",           "[cumulative SSM depth]"),
-            (fusion_blend,  "Dual-Branch Fusion Map",        "[Mamba + ConvNeXt weighted]"),
+            (rollout_blend, "EVA-02 Layer Rollout",          "[cumulative attention depth]"),
+            (fusion_blend,  "Dual-Branch Fusion Map",        "[EVA-02 + ConvNeXt weighted]"),
             (attn_blend,    "Fusion Attention Heatmap",      "[global cross-attention]"),
             (img_seg_rgb,   "Segmented Input (ConvNeXt)",    "[UNet lesion mask applied]"),
         ]

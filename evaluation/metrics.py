@@ -204,33 +204,18 @@ def compute_pauc(
         return 0.0
 
     try:
-        fpr, tpr, _ = roc_curve(y_binary, mel_probs)
-
-        # Only keep the ROC region where TPR >= min_tpr
-        mask = tpr >= min_tpr
-        if mask.sum() < 2:
-            return 0.0
-
-        partial_auc = np.trapz(tpr[mask], fpr[mask])
-
-        # Normalize by max possible area above min_tpr
-        max_area = 1.0 - min_tpr  # = 0.20 for min_tpr=0.80
-        if max_area < 1e-8:
-            return 0.0
-
-        result = float(np.clip(partial_auc / max_area, 0.0, 1.0))
-
-        # Warn when result is suspiciously perfect — likely metric saturation
-        # on a small test set, NOT a true perfect score.
-        if result >= 1.0:
-            import warnings
-            warnings.warn(
-                "compute_pauc() returned 1.0 — this likely indicates metric saturation "
-                "on a small test split, not a genuinely perfect score. "
-                "Do NOT report this as ISIC 2024 pAUC = 1.0 in any paper.",
-                UserWarning, stacklevel=2,
-            )
-        return result
+        # pAUC over the region TPR >= min_tpr, computed the CORRECT way.
+        # The previous hand-rolled trapz version returned 0.0. Standard trick
+        # (as used by the ISIC 2024 metric): flip labels & scores so the high-TPR
+        # region maps to the low-FPR region, then use sklearn's McClish-corrected
+        # partial AUC via max_fpr. Result is in [0.5, 1.0] (0.5 = random).
+        # NOTE: still an INTERNAL number — different test set than the ISIC
+        # leaderboard — do NOT report it as a competition score.
+        max_fpr = 1.0 - min_tpr                      # 0.20 for min_tpr=0.80
+        v_gt    = 1 - y_binary                       # flip labels
+        v_pred  = 1.0 - mel_probs                    # flip scores
+        pauc = roc_auc_score(v_gt, v_pred, max_fpr=max_fpr)
+        return float(np.clip(pauc, 0.0, 1.0))
     except Exception:
         return 0.0
 
