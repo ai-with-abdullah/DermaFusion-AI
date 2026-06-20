@@ -400,6 +400,12 @@ def main():
     # AUC (a measurement artifact). Per-branch contribution is instead measured by the
     # frozen-feature linear probes below (run_branch_probes), which is the publishable
     # methodology.
+    # Optional fast mode: cap TTA views (e.g. ABLATION_MAX_VIEWS=1 → no TTA, ~4× faster).
+    # Useful when the Kaggle session / power / network is unstable and you want the run
+    # to fit in a short window. Novelty deltas stay valid as long as you compare against
+    # the matching no-TTA Full Model (= Ablation 1).
+    max_views = int(os.environ.get("ABLATION_MAX_VIEWS", 5))
+
     configs_to_run = [
         {"name": "Ablation 1: No TTA", "n_views": 1},
         {"name": "Ablation 5: No Segmentation", "n_views": 5},
@@ -409,14 +415,31 @@ def main():
         {"name": "Ablation 8: Plain Spatial Fusion", "n_views": 5},  # #2 + #3 off
         {"name": "Full Model", "n_views": 5},
     ]
-    
+
+    csv_save_path = os.path.join(config.OUTPUT_DIR, "ablation_study_results.csv")
+
+    # ── Resume support: load already-completed rows so a crashed/timed-out run can be
+    #    re-launched and pick up where it stopped (each row is saved as soon as it is
+    #    computed, below). Delete the CSV to force a clean re-run.
     results = []
-    
+    done = set()
+    if os.path.exists(csv_save_path):
+        prev = pd.read_csv(csv_save_path)
+        results = prev.to_dict("records")
+        done = set(prev["configuration"].astype(str).tolist())
+        logger.info(f"[RESUME] Found {len(done)} completed row(s) in {csv_save_path}: {sorted(done)}")
+
+    def _save():
+        pd.DataFrame(results).to_csv(csv_save_path, index=False)
+
     for run_cfg in configs_to_run:
         name = run_cfg["name"]
-        n_views = run_cfg["n_views"]
+        if name in done:
+            logger.info(f"[RESUME] Skipping already-completed: {name}")
+            continue
+        n_views = min(run_cfg["n_views"], max_views)
         logger.info(f"Evaluating: {name} (TTA views = {n_views})")
-        
+
         y_true, y_pred_probs = evaluate_config(
             model=model,
             unet=unet,
@@ -425,14 +448,14 @@ def main():
             config_name=name,
             n_views=n_views
         )
-        
+
         # Compute metrics
         metrics = compute_metrics(y_true, y_pred_probs)
         log_metrics(metrics, logger, prefix=name)
-        
+
         mel_sens = metrics['per_class_sensitivity'].get('mel', 0.0)
         mel_spec = metrics['per_class_specificity'].get('mel', 0.0)
-        
+
         results.append({
             "configuration": name,
             "accuracy": metrics['accuracy'],
@@ -443,22 +466,32 @@ def main():
             "mel_sensitivity": mel_sens,
             "mel_specificity": mel_spec,
         })
+        _save()   # incremental save — survives a later crash/timeout
+        logger.info(f"[SAVED] {name} → {csv_save_path}")
 
     # ── Frozen-feature linear probes (per-branch contribution) ────────────── #
     # Replaces the invalid "single branch through trained head" ablations.
-    logger.info("Running frozen-feature linear probes for per-branch contribution...")
-    probe_results = run_branch_probes(
-        model=model, unet=unet, train_loader=train_loader, test_loader=test_loader,
-        device=config.DEVICE, logger=logger, mel_idx=mel_idx,
-        max_train_batches=PROBE_TRAIN_BATCHES,
-    )
-    results.extend(probe_results)
+    probe_names = [
+        "EVA-02 Branch (frozen-feature probe)",
+        "ConvNeXt Branch (frozen-feature probe)",
+        "Concat Fusion (frozen-feature probe)",
+    ]
+    if all(n in done for n in probe_names):
+        logger.info("[RESUME] All probe rows already present; skipping probe stage.")
+    else:
+        logger.info("Running frozen-feature linear probes for per-branch contribution...")
+        probe_results = run_branch_probes(
+            model=model, unet=unet, train_loader=train_loader, test_loader=test_loader,
+            device=config.DEVICE, logger=logger, mel_idx=mel_idx,
+            max_train_batches=PROBE_TRAIN_BATCHES,
+        )
+        for r in probe_results:
+            if r["configuration"] not in done:
+                results.append(r)
+        _save()
 
-    # Save to CSV
-    results_df = pd.DataFrame(results)
-    csv_save_path = os.path.join(config.OUTPUT_DIR, "ablation_study_results.csv")
-    results_df.to_csv(csv_save_path, index=False)
     logger.info(f"Ablation results saved to: {csv_save_path}")
+    results_df = pd.DataFrame(results)
     
     # Plot results
     plot_save_path = os.path.join(config.PLOTS_DIR, "ablation_study_bar.png")
