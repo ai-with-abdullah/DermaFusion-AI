@@ -1,13 +1,20 @@
 """
 Ablation Study Pipeline — 2026 SOTA Evaluation
 ===============================================
-Evaluates 6 configurations on the unified test set:
-  1. Ablation 1: No TTA (Single-view evaluation)
-  2. Ablation 2: ConvNeXt Only (Bypass EVA-02 and fusion)
-  3. Ablation 3: EVA-02 Only (Bypass ConvNeXt and fusion)
-  4. Ablation 4: No Cross-Attention (Fuse via simple average)
-  5. Ablation 5: No Segmentation (Feed original image to ConvNeXt)
-  6. Full Model (Dual-Branch + Segmentation + Cross-Attention + TTA)
+Evaluates the following on the unified test set:
+  - Ablation 1: No TTA (Single-view evaluation)
+  - Ablation 4: No Cross-Attention (Fuse via simple average, through trained head)
+  - Ablation 5: No Segmentation (Feed original image to ConvNeXt)
+  - Ablation 6/7/8: Novelty toggles (uncertainty bias / asymmetry / plain spatial)
+  - Full Model (Dual-Branch + Segmentation + Cross-Attention + TTA)
+
+Per-branch contribution is measured separately by FROZEN-FEATURE LINEAR PROBES
+(run_branch_probes): a fresh classifier head is trained on each branch's frozen
+features under an identical protocol — EVA-02 alone, ConvNeXt alone, and their
+concatenation. This replaces the earlier "single branch routed through the
+end-to-end-trained head" approach, which fed off-manifold inputs to a head that only
+ever saw the gated, LayerNorm'd, cross-attention-fused vector and therefore produced
+sub-random AUC (a measurement artifact, not a branch-quality signal).
 
 Saves results to outputs/ablation_study_results.csv
 Generates comparison plot outputs/plots/ablation_study_bar.png
@@ -22,6 +29,8 @@ for k in list(sys.modules.keys()):
         sys.modules.pop(k)
 
 import torch
+import torch.nn as nn
+from torch.utils.data import TensorDataset, DataLoader as _TensorLoader
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -36,7 +45,7 @@ from utils.logger import setup_logger
 from datasets.unified_dataset import get_unified_dataloaders
 from models.transformer_unet import SwinTransformerUNet
 from models.unet import LightweightUNet
-from models.dual_branch_fusion import DualBranchFusionClassifier
+from models.dual_branch_fusion import DualBranchFusionClassifier, ClassifierHead
 from evaluation.metrics import compute_metrics, log_metrics
 from training.train_utils import apply_mask
 from training.tta import _apply_tta_view
@@ -74,22 +83,14 @@ def evaluate_config(model, unet, loader, device, config_name, n_views=5):
             aug_images = _apply_tta_view(images, view_idx)
             
             with autocast('cuda', enabled=(device == 'cuda')):
-                if config_name == "Ablation 2: ConvNeXt Only":
-                    # Generate mask and apply it
-                    mask_logits = unet(aug_images)
-                    images_seg = apply_mask(aug_images, mask_logits)
-                    # Bypass EVA-02 branch: project ConvNeXt features directly to classifier
-                    feat_conv = model.branch_conv(images_seg)
-                    feat_conv = model.proj_conv(feat_conv)
-                    logits = model.classifier(feat_conv)
-                    
-                elif config_name == "Ablation 3: EVA-02 Only":
-                    # Bypass ConvNeXt branch: project EVA-02 features directly to classifier
-                    feat_eva = model.branch_eva(aug_images)
-                    feat_eva = model.proj_eva(feat_eva)
-                    logits = model.classifier(feat_eva)
-                    
-                elif config_name == "Ablation 4: No Cross-Attention":
+                # NOTE: Single-branch ablations ("EVA-02 only" / "ConvNeXt only") are
+                # NOT handled here. Feeding a bare single-branch projection into the
+                # end-to-end-trained classifier head is off-manifold (the head only ever
+                # saw the LayerNorm'd, gated, cross-attention-fused vector) and yields
+                # sub-random AUC — a measurement artifact, not branch quality. They are
+                # measured properly via the frozen-feature linear-probe protocol in
+                # run_branch_probes(). See main().
+                if config_name == "Ablation 4: No Cross-Attention":
                     # Generate mask and apply it
                     mask_logits = unet(aug_images)
                     images_seg = apply_mask(aug_images, mask_logits)
@@ -157,6 +158,139 @@ def evaluate_config(model, unet, loader, device, config_name, n_views=5):
     return np.array(all_targets), np.array(all_probs)
 
 
+@torch.no_grad()
+def _extract_branch_features(model, unet, loader, device, max_batches=None, desc="Extract"):
+    """
+    Runs a single (no-TTA) forward pass through the frozen backbones and collects the
+    projected per-branch features. Used to build a cached dataset for linear probing.
+
+    Returns:
+        feat_eva  : (N, fusion_dim) float32 CPU tensor — EVA-02 branch features
+        feat_conv : (N, fusion_dim) float32 CPU tensor — ConvNeXt branch features
+        labels    : (N,)            int64   CPU tensor
+    """
+    model.eval()
+    if unet is not None:
+        unet.eval()
+
+    eva_list, conv_list, lab_list = [], [], []
+    for i, batch in enumerate(tqdm(loader, desc=desc)):
+        if max_batches is not None and i >= max_batches:
+            break
+        images = batch['image'].to(device)
+        labels = batch['label']
+
+        with autocast('cuda', enabled=(device == 'cuda')):
+            mask_logits = unet(images)
+            images_seg  = apply_mask(images, mask_logits)
+            # Same routing as the full model: EVA sees the original image,
+            # ConvNeXt sees the segmented image.
+            feat_eva  = model.proj_eva(model.branch_eva(images))
+            feat_conv = model.proj_conv(model.branch_conv(images_seg))
+
+        eva_list.append(feat_eva.float().cpu())
+        conv_list.append(feat_conv.float().cpu())
+        lab_list.append(labels.cpu())
+
+    return (torch.cat(eva_list), torch.cat(conv_list), torch.cat(lab_list))
+
+
+def _train_probe_and_predict(train_x, train_y, test_x, test_y, num_classes,
+                             device, logger, name, epochs=60, lr=1e-3, batch_size=256):
+    """
+    Trains a fresh ClassifierHead on cached frozen features (a linear/MLP probe) and
+    returns (y_true, y_pred_probs) on the test features.
+
+    The probe protocol is identical across all branch conditions (EVA-only,
+    ConvNeXt-only, Concat), so the ONLY variable is the feature source — which is what
+    makes the single-branch comparison interpretable and publishable. The training
+    stream is class-balanced (the train loader uses a WeightedRandomSampler), so a plain
+    cross-entropy objective already targets balanced accuracy.
+    """
+    in_features = train_x.size(1)
+    head = ClassifierHead(
+        in_features=in_features,
+        hidden_features=in_features // 2,
+        num_classes=num_classes,
+        dropout=config.FUSION_DROPOUT,
+    ).to(device)
+
+    opt = torch.optim.AdamW(head.parameters(), lr=lr, weight_decay=1e-4)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
+    crit = nn.CrossEntropyLoss()
+
+    ds = TensorDataset(train_x, train_y)
+    dl = _TensorLoader(ds, batch_size=batch_size, shuffle=True, drop_last=False)
+
+    head.train()
+    for ep in range(epochs):
+        running = 0.0
+        for xb, yb in dl:
+            xb, yb = xb.to(device), yb.to(device)
+            opt.zero_grad()
+            loss = crit(head(xb), yb)
+            loss.backward()
+            opt.step()
+            running += loss.item() * xb.size(0)
+        sched.step()
+        if (ep + 1) % 20 == 0 or ep == 0:
+            logger.info(f"    [{name}] probe epoch {ep+1}/{epochs} — loss {running/len(ds):.4f}")
+
+    head.eval()
+    probs_list = []
+    with torch.no_grad():
+        for xb, _ in _TensorLoader(TensorDataset(test_x, test_y), batch_size=512, shuffle=False):
+            xb = xb.to(device)
+            probs_list.append(torch.softmax(head(xb), dim=1).cpu().float().numpy())
+    y_pred_probs = np.concatenate(probs_list, axis=0)
+    return test_y.numpy(), y_pred_probs
+
+
+def run_branch_probes(model, unet, train_loader, test_loader, device, logger,
+                      mel_idx, max_train_batches):
+    """
+    Frozen-feature linear-probe ablation for per-branch contribution.
+
+    Extracts frozen features once for the (class-balanced) train stream and the test
+    set, then trains an identical fresh head on: EVA-02 alone, ConvNeXt alone, and their
+    concatenation. Returns a list of result dicts ready to append to the study table.
+    """
+    logger.info(f"Extracting frozen TRAIN features for probes (max_batches={max_train_batches})...")
+    tr_eva, tr_conv, tr_y = _extract_branch_features(
+        model, unet, train_loader, device, max_batches=max_train_batches, desc="Probe train feats")
+    logger.info(f"Extracting frozen TEST features for probes...")
+    te_eva, te_conv, te_y = _extract_branch_features(
+        model, unet, test_loader, device, max_batches=None, desc="Probe test feats")
+
+    tr_cat = torch.cat([tr_eva, tr_conv], dim=1)
+    te_cat = torch.cat([te_eva, te_conv], dim=1)
+
+    probe_specs = [
+        ("EVA-02 Branch (frozen-feature probe)",   tr_eva,  te_eva),
+        ("ConvNeXt Branch (frozen-feature probe)", tr_conv, te_conv),
+        ("Concat Fusion (frozen-feature probe)",   tr_cat,  te_cat),
+    ]
+
+    out = []
+    for name, trx, tex in probe_specs:
+        logger.info(f"Training probe: {name}  (in_features={trx.size(1)})")
+        y_true, y_pred_probs = _train_probe_and_predict(
+            trx, tr_y, tex, te_y, config.NUM_CLASSES, device, logger, name)
+        metrics = compute_metrics(y_true, y_pred_probs)
+        log_metrics(metrics, logger, prefix=name)
+        out.append({
+            "configuration": name,
+            "accuracy": metrics['accuracy'],
+            "balanced_accuracy": metrics['balanced_accuracy'],
+            "macro_f1": metrics['macro_f1'],
+            "macro_auc": metrics['macro_auc'],
+            "ece": metrics['ece'],
+            "mel_sensitivity": metrics['per_class_sensitivity'].get('mel', 0.0),
+            "mel_specificity": metrics['per_class_specificity'].get('mel', 0.0),
+        })
+    return out
+
+
 def plot_ablation_results(results_df, save_path):
     """Plots a premium dark-themed bar chart comparing the ablation configurations."""
     # Order configurations logically
@@ -217,9 +351,14 @@ def main():
     logger.info("Starting Ablation Study Pipeline")
     
     # ── Dataloaders ──────────────────────────────────────────────────────── #
-    _, _, test_loader, _ = get_unified_dataloaders(
+    # train_loader is class-balanced (WeightedRandomSampler) and is used to build the
+    # frozen-feature dataset for the single-branch linear probes.
+    train_loader, _, test_loader, _ = get_unified_dataloaders(
         config.DATA_DIR, masks_dir=os.path.join(config.DATA_DIR, "masks")
     )
+    # Number of (balanced) train batches to extract for the probes. With BATCH_SIZE=2
+    # this is ~6k balanced samples, ample for a frozen-feature probe. Raise for more.
+    PROBE_TRAIN_BATCHES = int(os.environ.get("PROBE_TRAIN_BATCHES", 3000))
     
     # ── Load Segmentation Model ───────────────────────────────────────────── #
     if config.SEG_MODEL == 'swin_unet':
@@ -258,10 +397,13 @@ def main():
     # 'mel' is class index 4
     mel_idx = config.CLASSES.index('mel') if 'mel' in config.CLASSES else 4
     
+    # NOTE: "ConvNeXt Only" / "EVA-02 Only" are intentionally NOT in this list. Bypassing
+    # a branch into the end-to-end-trained head is off-manifold and produces sub-random
+    # AUC (a measurement artifact). Per-branch contribution is instead measured by the
+    # frozen-feature linear probes below (run_branch_probes), which is the publishable
+    # methodology.
     configs_to_run = [
         {"name": "Ablation 1: No TTA", "n_views": 1},
-        {"name": "Ablation 2: ConvNeXt Only", "n_views": 5},
-        {"name": "Ablation 3: EVA-02 Only", "n_views": 5},
         {"name": "Ablation 4: No Cross-Attention", "n_views": 5},
         {"name": "Ablation 5: No Segmentation", "n_views": 5},
         # Novelty ablations (eval-time toggles on the SAME trained full model):
@@ -304,7 +446,17 @@ def main():
             "mel_sensitivity": mel_sens,
             "mel_specificity": mel_spec,
         })
-        
+
+    # ── Frozen-feature linear probes (per-branch contribution) ────────────── #
+    # Replaces the invalid "single branch through trained head" ablations.
+    logger.info("Running frozen-feature linear probes for per-branch contribution...")
+    probe_results = run_branch_probes(
+        model=model, unet=unet, train_loader=train_loader, test_loader=test_loader,
+        device=config.DEVICE, logger=logger, mel_idx=mel_idx,
+        max_train_batches=PROBE_TRAIN_BATCHES,
+    )
+    results.extend(probe_results)
+
     # Save to CSV
     results_df = pd.DataFrame(results)
     csv_save_path = os.path.join(config.OUTPUT_DIR, "ablation_study_results.csv")
