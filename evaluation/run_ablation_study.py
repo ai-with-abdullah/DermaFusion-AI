@@ -3,8 +3,7 @@ Ablation Study Pipeline — 2026 SOTA Evaluation
 ===============================================
 Evaluates the following on the unified test set:
   - Ablation 1: No TTA (Single-view evaluation)
-  - Ablation 4: No Cross-Attention (Fuse via simple average, through trained head)
-  - Ablation 5: No Segmentation (Feed original image to ConvNeXt)
+  - Ablation 5: No Segmentation (Feed original unmasked image to both branches)
   - Ablation 6/7/8: Novelty toggles (uncertainty bias / asymmetry / plain spatial)
   - Full Model (Dual-Branch + Segmentation + Cross-Attention + TTA)
 
@@ -90,31 +89,21 @@ def evaluate_config(model, unet, loader, device, config_name, n_views=5):
                 # sub-random AUC — a measurement artifact, not branch quality. They are
                 # measured properly via the frozen-feature linear-probe protocol in
                 # run_branch_probes(). See main().
-                if config_name == "Ablation 4: No Cross-Attention":
-                    # Generate mask and apply it
+                # NOTE: "Ablation 4: No Cross-Attention" has been REMOVED. There is no
+                # valid eval-time way to delete the cross-attention: bug_attn IS the
+                # trained fusion core, and gate + classifier were trained on its output.
+                # Bypassing it (or using the untrained pooled `model.fusion`) collapses
+                # to sub-random. "Ablation 8: Plain Spatial Fusion" (both novelties off)
+                # is the valid fusion ablation.
+                if config_name == "Ablation 5: No Segmentation":
+                    # Clean INPUT-level ablation: route through the REAL trained forward,
+                    # but feed the ORIGINAL (unmasked) image to BOTH branches so the
+                    # ConvNeXt branch never sees the segmentation. (The old version used
+                    # the untrained pooled path → sub-random; this does not.)
                     mask_logits = unet(aug_images)
-                    images_seg = apply_mask(aug_images, mask_logits)
-                    # Forward pass through backbones
-                    feat_eva = model.branch_eva(aug_images)
-                    feat_eva = model.proj_eva(feat_eva)
-                    feat_conv = model.branch_conv(images_seg)
-                    feat_conv = model.proj_conv(feat_conv)
-                    # Bypass cross-attention, fuse by simple average
-                    fused = (feat_eva + feat_conv) / 2.0
-                    combined = model.gate(fused, feat_eva, feat_conv)
-                    logits = model.classifier(combined)
-                    
-                elif config_name == "Ablation 5: No Segmentation":
-                    # Feed standard (unmasked) image to the ConvNeXt branch instead of the Swin-UNet soft mask
-                    feat_eva = model.branch_eva(aug_images)
-                    feat_eva = model.proj_eva(feat_eva)
-                    feat_conv = model.branch_conv(aug_images) # Feed aug_images to ConvNeXt
-                    feat_conv = model.proj_conv(feat_conv)
-                    # Normal fusion and classification
-                    fused, _ = model.fusion(feat_eva, feat_conv)
-                    combined = model.gate(fused, feat_eva, feat_conv)
-                    logits = model.classifier(combined)
-                    
+                    mask_prob   = torch.sigmoid(mask_logits.float())
+                    logits, _ = model(aug_images, aug_images, mask_prob)
+
                 elif config_name == "Ablation 6: No Uncertainty Bias":
                     # Novelty #2 ablation: BUG-Attn with γ=δ off → plain spatial attn
                     mask_logits = unet(aug_images)
@@ -161,13 +150,19 @@ def evaluate_config(model, unet, loader, device, config_name, n_views=5):
 @torch.no_grad()
 def _extract_branch_features(model, unet, loader, device, max_batches=None, desc="Extract"):
     """
-    Runs a single (no-TTA) forward pass through the frozen backbones and collects the
-    projected per-branch features. Used to build a cached dataset for linear probing.
+    Runs a single (no-TTA) forward pass through the frozen backbones and collects
+    global-average-pooled features from the TRAINED spatial trunk (forward_tokens).
+
+    IMPORTANT: we must NOT use model.proj_eva / model.branch_conv(...) pooled outputs.
+    With use_spatial_fusion=True (the trained config), those pooled projection layers
+    are never called during training and are therefore random/untrained — features
+    from them are garbage. forward_tokens() is exactly the trunk the full model uses,
+    so these are genuine trained features.
 
     Returns:
-        feat_eva  : (N, fusion_dim) float32 CPU tensor — EVA-02 branch features
-        feat_conv : (N, fusion_dim) float32 CPU tensor — ConvNeXt branch features
-        labels    : (N,)            int64   CPU tensor
+        feat_eva  : (N, eva_dim)        float32 CPU tensor — EVA-02 trunk features
+        feat_conv : (N, conv_bb_dim)    float32 CPU tensor — ConvNeXt trunk features
+        labels    : (N,)                int64   CPU tensor
     """
     model.eval()
     if unet is not None:
@@ -183,10 +178,13 @@ def _extract_branch_features(model, unet, loader, device, max_batches=None, desc
         with autocast('cuda', enabled=(device == 'cuda')):
             mask_logits = unet(images)
             images_seg  = apply_mask(images, mask_logits)
-            # Same routing as the full model: EVA sees the original image,
-            # ConvNeXt sees the segmented image.
-            feat_eva  = model.proj_eva(model.branch_eva(images))
-            feat_conv = model.proj_conv(model.branch_conv(images_seg))
+            # Same routing as the full model: EVA sees the original image, ConvNeXt
+            # sees the segmented image. Use the TRAINED trunk via forward_tokens()
+            # + global-average-pool (NOT the untrained pooled projection layers).
+            eva_grid  = model.branch_eva.forward_tokens(images)       # (B, eva_dim, G, G)
+            conv_grid = model.branch_conv.forward_tokens(images_seg)  # (B, conv_bb_dim, G, G)
+            feat_eva  = eva_grid.mean(dim=(2, 3))                     # (B, eva_dim)
+            feat_conv = conv_grid.mean(dim=(2, 3))                    # (B, conv_bb_dim)
 
         eva_list.append(feat_eva.float().cpu())
         conv_list.append(feat_conv.float().cpu())
@@ -404,7 +402,6 @@ def main():
     # methodology.
     configs_to_run = [
         {"name": "Ablation 1: No TTA", "n_views": 1},
-        {"name": "Ablation 4: No Cross-Attention", "n_views": 5},
         {"name": "Ablation 5: No Segmentation", "n_views": 5},
         # Novelty ablations (eval-time toggles on the SAME trained full model):
         {"name": "Ablation 6: No Uncertainty Bias", "n_views": 5},   # Novelty #2 off
