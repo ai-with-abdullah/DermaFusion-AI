@@ -354,6 +354,39 @@ def process(image):
         )
 
     pil_img = Image.fromarray(image).convert("RGB")
+
+    # ── Input gatekeeper: cheap CLIP pre-filter ──────────────────────────────── #
+    # Reject non-skin images (animals, objects, screenshots, X-rays, faces, …)
+    # BEFORE the heavy 405M model + UNet + TTA ever run.
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from gatekeeper import check_skin_image
+        is_skin, gate_score, gate_detail = check_skin_image(pil_img)
+    except Exception as _gate_err:           # never let the gate crash the app
+        print(f"[Gatekeeper] skipped: {_gate_err}")
+        is_skin, gate_score, gate_detail = True, 1.0, "gate skipped"
+
+    if not is_skin:
+        reject_html = f"""
+<div style="
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border: 1px solid #ef444440; border-left: 4px solid #ef4444;
+    border-radius: 12px; padding: 20px 24px;
+    font-family: 'Inter', system-ui, sans-serif; margin-top: 4px;">
+    <div style="color:#f87171; font-size:1.15rem; font-weight:700; margin-bottom:8px;">
+        🚫 Not a skin image
+    </div>
+    <div style="color:#cbd5e1; font-size:0.85rem; line-height:1.5;">
+        This image doesn't look like a dermoscopic or clinical skin photo, so the
+        diagnostic model was <strong>not</strong> run. Please upload a close-up
+        photo of a skin lesion.
+    </div>
+    <div style="color:#64748b; font-size:0.72rem; margin-top:10px;">
+        Input gate: {gate_detail}
+    </div>
+</div>"""
+        return (None, None, reject_html, "🚫 Rejected by input gate", "")
+
     start   = time.time()
     pred_cls, probs, heatmap_img = run_inference(pil_img)
     elapsed = time.time() - start

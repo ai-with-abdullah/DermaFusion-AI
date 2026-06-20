@@ -3,6 +3,7 @@ spaces
 torch>=2.0.0
 torchvision>=0.15.0
 timm>=0.9.12
+open_clip_torch>=2.20.0   # cheap CLIP zero-shot input gatekeeper (see gatekeeper.py)
 numpy>=1.24.0
 Pillow>=9.0.0
 opencv-python-headless>=4.8.0
