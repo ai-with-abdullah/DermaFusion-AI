@@ -73,6 +73,13 @@ def run(model, unet, loader, device):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no-sala", action="store_true", dest="no_sala",
+                        help="Ablate on the no-SALA model (best_dual_branch_fusion_nosala.pth)")
+    args = parser.parse_args()
+    tag = "_nosala" if args.no_sala else ""
+
     seed_everything(config.SEED)
     dev = config.DEVICE
 
@@ -91,8 +98,9 @@ def main():
         use_spatial_fusion=getattr(config, 'USE_SPATIAL_FUSION', True),
         fusion_grid=getattr(config, 'FUSION_GRID', 14)).to(dev)
     model.load_state_dict(torch.load(
-        os.path.join(config.WEIGHTS_DIR, "best_dual_branch_fusion.pth"),
+        os.path.join(config.WEIGHTS_DIR, f"best_dual_branch_fusion{tag}.pth"),
         map_location=dev, weights_only=True))
+    print(f"[ablation] using classifier weights: best_dual_branch_fusion{tag}.pth")
 
     y, probs = run(model, unet, test_loader, dev)
 
@@ -109,7 +117,7 @@ def main():
         })
 
     df = pd.DataFrame(rows)
-    out = os.path.join(config.OUTPUT_DIR, "novelty_ablation_results.csv")
+    out = os.path.join(config.OUTPUT_DIR, f"novelty_ablation_results{tag}.csv")
     df.to_csv(out, index=False)
 
     print("\n" + "=" * 78)
