@@ -184,61 +184,92 @@ def _train_head(Xtr, ytr, str_, Xva, yva, C, device, method, epochs=60, tau=1.0)
     return head
 
 
-def compare():
-    seed_everything(config.SEED)
-    dev = config.DEVICE
-    C = config.NUM_CLASSES
-    Xtr, ytr, str_ = _load("train")
-    Xva, yva, _    = _load("val")
-    Xte, yte, _    = _load("test")
-    print(f"features: train{Xtr.shape} val{Xva.shape} test{Xte.shape}")
+METHODS = {"A": "Plain (class-weighted CE)",
+           "B": "Per-Source Logit Adj (SALA)",
+           "C": "Global Logit Adj (Menon)",
+           "D": "Decoupled Rebalance (OURS)"}
+METRICS = ["balanced_acc", "macro_f1", "macro_auc", "df_f1", "vasc_f1", "rare_mean_f1"]
 
+
+def _eval_one_seed(Xtr, ytr, str_, Xva, yva, Xte, yte, C, dev, seed):
+    """Train all 4 heads for ONE seed; return {method: {metric: value}}."""
+    import numpy as _np, torch as _t
+    _np.random.seed(seed); _t.manual_seed(seed)
     from sklearn.metrics import f1_score
-    methods = {"A": "Plain (class-weighted CE)",
-               "B": "Per-Source Logit Adj (SALA)",
-               "C": "Global Logit Adj (Menon)",
-               "D": "Decoupled Rebalance (OURS)"}
     rare = [config.CLASSES.index(c) for c in ('df', 'vasc') if c in config.CLASSES]
-    rows = []
-    for m, label in methods.items():
+    out = {}
+    for m, label in METHODS.items():
         head = _train_head(Xtr, ytr, str_, Xva, yva, C, dev, m)
         with torch.no_grad():
             probs = torch.softmax(head(torch.tensor(Xte, dtype=torch.float32, device=dev)), 1).cpu().numpy()
         met = compute_metrics(yte, probs)
         per_f1 = f1_score(yte, probs.argmax(1), average=None, labels=list(range(C)), zero_division=0)
-        rows.append({
-            "method": label,
-            "balanced_acc": round(met['balanced_accuracy'], 4),
-            "macro_f1":     round(met['macro_f1'], 4),
-            "macro_auc":    round(met['macro_auc'], 4),
-            "df_f1":        round(float(per_f1[config.CLASSES.index('df')]), 4),
-            "vasc_f1":      round(float(per_f1[config.CLASSES.index('vasc')]), 4),
-            "rare_mean_f1": round(float(np.mean([per_f1[i] for i in rare])), 4),
-        })
+        out[label] = {
+            "balanced_acc": met['balanced_accuracy'], "macro_f1": met['macro_f1'],
+            "macro_auc": met['macro_auc'],
+            "df_f1": float(per_f1[config.CLASSES.index('df')]),
+            "vasc_f1": float(per_f1[config.CLASSES.index('vasc')]),
+            "rare_mean_f1": float(np.mean([per_f1[i] for i in rare])),
+        }
+    return out
+
+
+def compare(seeds=1):
+    dev = config.DEVICE
+    C = config.NUM_CLASSES
+    Xtr, ytr, str_ = _load("train")
+    Xva, yva, _    = _load("val")
+    Xte, yte, _    = _load("test")
+    print(f"features: train{Xtr.shape} val{Xva.shape} test{Xte.shape} | seeds={seeds}")
+
+    # collect metrics across seeds: runs[label][metric] = [values...]
+    runs = {label: {k: [] for k in METRICS} for label in METHODS.values()}
+    for s in range(seeds):
+        print(f"\n--- seed {s+1}/{seeds} ---")
+        res = _eval_one_seed(Xtr, ytr, str_, Xva, yva, Xte, yte, C, dev, config.SEED + s)
+        for label, md in res.items():
+            for k, v in md.items():
+                runs[label][k].append(v)
+
+    rows = []
+    for label in METHODS.values():
+        row = {"method": label}
+        for k in METRICS:
+            arr = np.array(runs[label][k])
+            row[k] = (f"{arr.mean():.4f} ± {arr.std():.4f}" if seeds > 1
+                      else f"{arr.mean():.4f}")
+        rows.append(row)
 
     df = pd.DataFrame(rows)
-    out = os.path.join(config.OUTPUT_DIR, "decoupled_study_results.csv")
+    tag = f"_seeds{seeds}" if seeds > 1 else ""
+    out = os.path.join(config.OUTPUT_DIR, f"decoupled_study_results{tag}.csv")
     df.to_csv(out, index=False)
-    print("\n" + "=" * 92)
-    print("  DECOUPLED REBALANCING STUDY (frozen features, head-only) — the methods contribution")
-    print("=" * 92)
+    print("\n" + "=" * 100)
+    print(f"  DECOUPLED REBALANCING STUDY — {seeds} seed(s), frozen features, head-only")
+    print("=" * 100)
     print(df.to_string(index=False))
-    print("=" * 92)
+    print("=" * 100)
     print(f"saved → {out}")
-    print("\nCLAIM: row D (OURS) should have the highest rare_mean_f1 (df+vasc) while keeping")
-    print("macro_auc competitive — i.e. it fixes the multi-source rare-class collapse that B fails on.")
+    if seeds > 1:
+        print("\nReport these mean ± std in the paper. If D's rare_mean_f1 stays highest across")
+        print("seeds (non-overlapping with baselines), the contribution is robust, not a lucky seed.")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--compare", action="store_true", help="skip extraction, reuse cached features")
+    ap.add_argument("--compare", action="store_true",
+                    help="skip extraction, reuse cached features (fast)")
+    ap.add_argument("--seeds", type=int, default=1,
+                    help="run the head comparison across N seeds → mean ± std")
     args = ap.parse_args()
-    if not args.compare and not os.path.exists(os.path.join(CACHE, "test.npz")):
+    # Re-extract only if the cache is missing AND we're not in --compare mode.
+    cache_ready = os.path.exists(os.path.join(CACHE, "test.npz"))
+    if not args.compare and not cache_ready:
         cache_features()
-    elif not args.compare:
-        print(f"[cache exists at {CACHE}] — re-extracting. Use --compare to reuse.")
+    elif not cache_ready:
+        print("[--compare set but no cache found] extracting features first...")
         cache_features()
-    compare()
+    compare(seeds=args.seeds)
 
 
 if __name__ == "__main__":
