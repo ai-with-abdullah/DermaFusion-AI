@@ -122,6 +122,13 @@ def infer(model, unet, loader, device):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--no-sala", action="store_true", dest="no_sala",
+                    help="use the final no-SALA model (best_dual_branch_fusion_nosala.pth)")
+    args = ap.parse_args()
+    tag = "_nosala" if args.no_sala else ""
+
     seed_everything(config.SEED)
     dev = config.DEVICE
     C = config.NUM_CLASSES
@@ -142,8 +149,9 @@ def main():
         use_spatial_fusion=getattr(config, 'USE_SPATIAL_FUSION', True),
         fusion_grid=getattr(config, 'FUSION_GRID', 14)).to(dev)
     model.load_state_dict(torch.load(
-        os.path.join(config.WEIGHTS_DIR, "best_dual_branch_fusion.pth"),
+        os.path.join(config.WEIGHTS_DIR, f"best_dual_branch_fusion{tag}.pth"),
         map_location=dev, weights_only=True))
+    print(f"[thresholds] using classifier weights: best_dual_branch_fusion{tag}.pth")
 
     print("\n[1/2] Inference on VALIDATION (for threshold tuning)...")
     val_labels, val_probs = infer(model, unet, val_loader, dev)
