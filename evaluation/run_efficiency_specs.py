@@ -76,17 +76,24 @@ def count_parameters(model, unet):
 #                          FLOPs ESTIMATION                                    #
 # =========================================================================== #
 
-def estimate_flops(model, inputs, device):
-    """fvcore → thop → param-based fallback. Returns a printable string."""
-    model.eval()
+def _fvcore_gflops(module, inputs, device):
+    """fvcore GFLOPs for a single module, or None if tracing fails."""
     try:
         from fvcore.nn import FlopCountAnalysis
-        fca = FlopCountAnalysis(model, tuple(t.to(device) for t in inputs))
+        module.eval()
+        fca = FlopCountAnalysis(module, tuple(t.to(device) for t in inputs))
         fca.unsupported_ops_warnings(False)
         fca.uncalled_modules_warnings(False)
-        return f"{fca.total() / 1e9:.1f} GFLOPs (fvcore, some timm ops may be uncounted)"
-    except Exception as e:
-        pass
+        return fca.total() / 1e9
+    except Exception:
+        return None
+
+
+def estimate_flops(model, inputs, device):
+    """fvcore → thop → param-based fallback. Returns a printable string."""
+    g = _fvcore_gflops(model, inputs, device)
+    if g is not None:
+        return f"{g:.1f} GFLOPs (fvcore, some timm ops may be uncounted)"
     try:
         from thop import profile
         macs, _ = profile(model, inputs=tuple(t.to(device) for t in inputs), verbose=False)
@@ -242,8 +249,16 @@ def main():
     # ── 2. FLOPs ───────────────────────────────────────────────────────────── #
     print("\n[2] FLOPs")
     dummy_seg = torch.randn(1, 3, S, S, device=device)
-    dummy_mp  = torch.rand(1, 1, S, S, device=device)
-    flops_clf  = estimate_flops(model, (img, dummy_seg, dummy_mp), device)
+    # The whole-model fvcore trace fails on the mirror-asymmetry per-sample roll
+    # loop, so measure the two backbones (>99% of the compute) separately and sum;
+    # the fusion/attention on a 14x14 grid is negligible (<1 GFLOP).
+    eva_g  = _fvcore_gflops(model.branch_eva,  (img,),       device)
+    conv_g = _fvcore_gflops(model.branch_conv, (dummy_seg,), device)
+    if eva_g is not None and conv_g is not None:
+        flops_clf = (f"{eva_g + conv_g:.1f} GFLOPs (EVA-02 {eva_g:.1f} + ConvNeXt "
+                     f"{conv_g:.1f}; fusion negligible)")
+    else:
+        flops_clf = estimate_flops(model, (img, dummy_seg), device)
     flops_unet = estimate_flops(unet, (img,), device)
     print(f"  Classifier (EVA-02 + ConvNeXt + fusion): {flops_clf}")
     print(f"  Swin-UNet segmentation:                  {flops_unet}")
