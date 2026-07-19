@@ -46,7 +46,9 @@ from models.dual_branch_fusion import DualBranchFusionClassifier
 from evaluation.metrics import compute_metrics
 from training.train_utils import apply_mask
 
-CACHE = os.path.join(config.OUTPUT_DIR, "decoupled_features")
+# v2 cache: trained-trunk (forward_tokens) features, 2048-d. The old
+# "decoupled_features" cache used the untrained pooled projector — do not reuse it.
+CACHE = os.path.join(config.OUTPUT_DIR, "decoupled_features_v2")
 
 
 # =========================================================================== #
@@ -55,7 +57,15 @@ CACHE = os.path.join(config.OUTPUT_DIR, "decoupled_features")
 
 @torch.no_grad()
 def extract(model, unet, loader, device):
-    """Concat of FROZEN pooled EVA-02 + ConvNeXt features (the representation)."""
+    """Concat of FROZEN trained-trunk EVA-02 + ConvNeXt features (the representation).
+
+    Uses forward_tokens() + global-average-pool on BOTH branches (the trained
+    trunks). The pooled ``branch_conv`` path is deliberately avoided: it routes
+    through a FeatureProjector that is never called during spatial-fusion training
+    and is therefore random at inference, which would randomly project (corrupt)
+    the frozen ConvNeXt features. Both branches now yield 1024-d pooled features
+    (concat = 2048-d), consistent with the segmentation ablation.
+    """
     model.eval(); unet.eval()
     feats, labels, sources = [], [], []
     for batch in tqdm(loader, desc="extract"):
@@ -63,9 +73,9 @@ def extract(model, unet, loader, device):
         with autocast('cuda', enabled=(device == 'cuda')):
             mask_logits = unet(images)
             images_seg  = apply_mask(images, mask_logits)
-            f_eva  = model.branch_eva(images)        # (B, eva_dim)
-            f_conv = model.branch_conv(images_seg)   # (B, conv_dim)
-            f = torch.cat([f_eva, f_conv], dim=1)    # (B, eva+conv)
+            f_eva  = model.branch_eva.forward_tokens(images).mean(dim=(2, 3))       # (B, 1024)
+            f_conv = model.branch_conv.forward_tokens(images_seg).mean(dim=(2, 3))  # (B, 1024)
+            f = torch.cat([f_eva, f_conv], dim=1)    # (B, 2048) trained trunks
         feats.append(f.float().cpu().numpy())
         labels.append(batch['label'].numpy())
         sources.append(batch['source_id'].numpy())
