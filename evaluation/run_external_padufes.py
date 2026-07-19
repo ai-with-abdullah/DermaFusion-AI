@@ -62,6 +62,41 @@ PAD_TO_MODEL = {"MEL": "mel", "BCC": "bcc", "NEV": "nv",
                 "ACK": "akiec", "SEK": "bkl", "SCC": "akiec"}
 
 
+def find_metadata():
+    """Locate the PAD-UFES metadata.csv wherever the Kaggle dataset linked it."""
+    import pandas as _pd
+    quick = [os.path.join(config.DATA_DIR, "metadata.csv"),
+             os.path.join(config.DATA_DIR, "pad_ufes", "metadata.csv"),
+             os.path.join(config.DATA_DIR, "pad_ufes", "pad_ufes", "metadata.csv")]
+    roots = [os.path.join(config.DATA_DIR, "pad_ufes"), config.DATA_DIR]
+    for r in roots:
+        if os.path.isdir(r):
+            for dp, _, fs in os.walk(r):
+                for f in fs:
+                    if f.lower() == "metadata.csv":
+                        quick.append(os.path.join(dp, f))
+    for c in quick:
+        if os.path.exists(c):
+            try:
+                cols = set(_pd.read_csv(c, nrows=1).columns)
+                if {"img_id", "diagnostic"} <= cols:
+                    return c
+            except Exception:
+                pass
+    return None
+
+
+def find_image_dirs():
+    """All directories under data/pad_ufes that contain .png images."""
+    base = os.path.join(config.DATA_DIR, "pad_ufes")
+    dirs = []
+    if os.path.isdir(base):
+        for dp, _, fs in os.walk(base):
+            if any(f.lower().endswith(".png") for f in fs):
+                dirs.append(dp)
+    return dirs
+
+
 def enhance(img: Image.Image) -> Image.Image:
     """CLAHE on L channel + mild sharpening (optional domain-shift reducer)."""
     a = np.array(img)
@@ -136,8 +171,14 @@ def main():
     args = ap.parse_args()
     dev = config.DEVICE
 
-    csv = os.path.join(config.DATA_DIR, "metadata.csv")
-    assert os.path.exists(csv), f"metadata.csv not found at {csv}"
+    csv = find_metadata()
+    img_dirs = find_image_dirs()
+    if csv is None or not img_dirs:
+        raise SystemExit(
+            "PAD-UFES-20 not found. Attach the dataset in Kaggle (Add Input -> search "
+            "'PAD-UFES-20') so it links under data/pad_ufes/ with metadata.csv + the "
+            f"image folders.\n  metadata.csv found: {csv}\n  image dirs found: {img_dirs}")
+    print(f"[external] metadata: {csv}\n[external] image dirs: {img_dirs}")
     df = pd.read_csv(csv)
     df = df[df["diagnostic"].isin(PAD_TO_MODEL)].copy()
     print(f"PAD-UFES-20: {len(df)} images | classes: {df['diagnostic'].value_counts().to_dict()}")
@@ -145,8 +186,6 @@ def main():
         df = df.groupby("diagnostic", group_keys=False).apply(
             lambda x: x.sample(max(1, round(args.n * len(x) / len(df))), random_state=42))
         print(f"  stratified subset: {len(df)} images")
-
-    img_dirs = [os.path.join(config.DATA_DIR, "pad_ufes", "images", f"imgs_part_{i}") for i in (1, 2, 3)]
 
     unet = (SwinTransformerUNet(pretrained=False) if config.SEG_MODEL == "swin_unet"
             else LightweightUNet(3, 1)).to(dev)
